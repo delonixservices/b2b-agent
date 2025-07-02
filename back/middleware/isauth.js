@@ -205,11 +205,41 @@ const isEmployeeOfCompany = async (req, res, next) => {
   }
 };
 
+// Middleware to check if user is active (for protected routes)
+const isActive = async (req, res, next) => {
+  try {
+    if (req.user.type === 'company') {
+      if (!req.user.isActive) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account is pending verification. Please wait for admin approval before accessing this feature.'
+        });
+      }
+    } else if (req.user.type === 'employee') {
+      const employee = await Employee.findById(req.user.id);
+      if (!employee || !employee.isActive) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account is inactive. Please contact your company administrator.'
+        });
+      }
+    }
+    next();
+  } catch (error) {
+    console.error('Active status middleware error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = { 
   isAuth, 
   isCompany, 
   isEmployee, 
   isAdmin,
   isCompanyOrEmployee,
-  isEmployeeOfCompany 
+  isEmployeeOfCompany,
+  isActive
 }; 

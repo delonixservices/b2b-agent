@@ -245,13 +245,8 @@ const login = async (req, res) => {
       });
     }
 
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Account is deactivated'
-      });
-    }
+    // Note: We allow inactive users to login but they will be restricted in protected routes
+    // The isActive status will be checked in middleware for specific actions
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password);
@@ -482,6 +477,297 @@ const deactivateEmployee = async (req, res) => {
   }
 };
 
+// Submit business details (public route)
+const submitBusinessDetails = async (req, res) => {
+  try {
+    const { 
+      gstNumber, 
+      panNumber, 
+      address, 
+      billingAddress, 
+      email, 
+      phone 
+    } = req.body;
+
+    // Only address is mandatory
+    if (!address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address is required'
+      });
+    }
+
+    // Validate email format if provided
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email format'
+      });
+    }
+
+    // Validate phone format if provided (basic validation for Indian numbers)
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid phone number format (should be 10 digits starting with 6-9)'
+      });
+    }
+
+    // Create business details object
+    const businessDetails = {
+      gstNumber: gstNumber || null,
+      panNumber: panNumber || null,
+      address: address,
+      billingAddress: billingAddress || address, // Use address as billing address if not provided
+      email: email || null,
+      phone: phone || null,
+      submittedAt: new Date()
+    };
+
+    // In a real application, you might want to save this to a database
+    // For now, we'll just return the collected data
+    console.log('Business details submitted:', businessDetails);
+
+    res.status(200).json({
+      success: true,
+      message: 'Business details submitted successfully',
+      data: {
+        businessDetails
+      }
+    });
+
+  } catch (error) {
+    console.error('Submit business details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Save business details to company (authenticated route)
+const saveBusinessDetails = async (req, res) => {
+  try {
+    const { 
+      gstNumber, 
+      panNumber, 
+      address, 
+      billingAddress, 
+      email, 
+      phone,
+      logoUrl
+    } = req.body;
+    
+    const companyId = req.user.id;
+
+    // Only address is mandatory
+    if (!address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address is required'
+      });
+    }
+
+    // Validate email format if provided
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email format'
+      });
+    }
+
+    // Validate phone format if provided (basic validation for Indian numbers)
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid phone number format (should be 10 digits starting with 6-9)'
+      });
+    }
+
+    // Find the company
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    // Check if business details already exist
+    if (company.businessDetails && company.businessDetails.address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Business details have already been submitted. You can only submit once.',
+        data: {
+          businessDetails: company.businessDetails
+        }
+      });
+    }
+
+    // Update company with business details
+    company.businessDetails = {
+      gstNumber: gstNumber || null,
+      panNumber: panNumber || null,
+      address: address,
+      billingAddress: billingAddress || address,
+      email: email || null,
+      phone: phone || null,
+      submittedAt: new Date()
+    };
+
+    // Update logo if provided
+    if (logoUrl) {
+      // Validate URL format
+      try {
+        new URL(logoUrl);
+        company.logo = logoUrl;
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid logo URL format'
+        });
+      }
+    }
+
+    await company.save();
+
+    console.log('Business details saved to company:', companyId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Business details saved successfully',
+      data: {
+        businessDetails: company.businessDetails
+      }
+    });
+
+  } catch (error) {
+    console.error('Save business details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get business details for company
+const getBusinessDetails = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+
+    // Find the company
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Business details retrieved successfully',
+      data: {
+        businessDetails: company.businessDetails || null,
+        logo: company.logo || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get business details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Upload company logo
+const uploadLogo = async (req, res) => {
+  try {
+    const { logoUrl } = req.body;
+    const companyId = req.user.id;
+
+    if (!logoUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Logo URL is required'
+      });
+    }
+
+    // Validate URL format
+    try {
+      new URL(logoUrl);
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid logo URL format'
+      });
+    }
+
+    // Find the company
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    // Update company logo
+    company.logo = logoUrl;
+    await company.save();
+
+    console.log('Logo uploaded for company:', companyId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Logo uploaded successfully',
+      data: {
+        logo: company.logo
+      }
+    });
+
+  } catch (error) {
+    console.error('Upload logo error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get company logo
+const getLogo = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+
+    // Find the company
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Logo retrieved successfully',
+      data: {
+        logo: company.logo || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get logo error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   sendOtp,
   verifyOtp,
@@ -489,5 +775,10 @@ module.exports = {
   login,
   addEmployee,
   getEmployees,
-  deactivateEmployee
+  deactivateEmployee,
+  submitBusinessDetails,
+  saveBusinessDetails,
+  getBusinessDetails,
+  uploadLogo,
+  getLogo
 };

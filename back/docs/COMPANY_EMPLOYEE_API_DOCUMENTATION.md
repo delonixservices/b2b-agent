@@ -184,9 +184,59 @@ GET /employee/revenue/company
 ```
 **Headers:** `Authorization: Bearer <company_token>`
 
+### Markup Management Routes (Company Only)
+
+#### 18. Set Company Markup
+```
+POST /company/markup
+```
+**Headers:** `Authorization: Bearer <company_token>`
+**Body:**
+```json
+{
+  "type": "percentage",
+  "value": 10.5,
+  "isActive": true
+}
+```
+**Description:** Set markup configuration for the company. Type can be "percentage" or "fixed".
+
+#### 19. Get Company Markup
+```
+GET /company/markup
+```
+**Headers:** `Authorization: Bearer <company_token>`
+**Description:** Retrieve current markup configuration for the company.
+
+#### 20. Calculate Markup
+```
+POST /company/markup/calculate
+```
+**Headers:** `Authorization: Bearer <company_token>`
+**Body:**
+```json
+{
+  "basePrice": 1000
+}
+```
+**Description:** Calculate markup amount for a given base price using current markup settings.
+
+#### 21. Toggle Markup Active Status
+```
+PUT /company/markup/toggle
+```
+**Headers:** `Authorization: Bearer <company_token>`
+**Body:**
+```json
+{
+  "isActive": false
+}
+```
+**Description:** Activate or deactivate markup without changing the configuration.
+
 ### Employee Routes (Employee Only)
 
-#### 18. Get Employee Profile
+#### 22. Get Employee Profile
 ```
 GET /employee/profile/me
 ```
@@ -238,6 +288,12 @@ All API responses follow this format:
   "password": "hashed_password",
   "role": "company",
   "companyNumber": 1001,
+  "isActive": false,
+  "markup": {
+    "type": "percentage",
+    "value": 0,
+    "isActive": true
+  },
   "employees": [
     {
       "employeeId": "EMP1001001",

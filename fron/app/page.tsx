@@ -1,17 +1,33 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import SignupForm from './components/SignupForm'
-import { CheckCircle, Globe, Users, Shield, TrendingUp } from 'lucide-react'
+import { CheckCircle, Globe, Users, Shield, TrendingUp, Hotel } from 'lucide-react'
 
 export default function Home() {
   const [showSignupSuccess, setShowSignupSuccess] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const router = useRouter()
+
+  useEffect(() => {
+    // Check if user is logged in
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token')
+      setIsLoggedIn(!!token)
+    }
+  }, [])
 
   const handleSignupSuccess = () => {
     setShowSignupSuccess(true)
+    setIsLoggedIn(true) // Update login state after successful signup
     setTimeout(() => setShowSignupSuccess(false), 3000)
+  }
+
+  const handleStartBooking = () => {
+    router.push('/hotels')
   }
 
   return (
@@ -24,25 +40,56 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div>
               <h1 className="text-4xl md:text-6xl font-bold mb-6">
-                Connect with Travel Agencies
+                Book Hotels with B2B Rates
               </h1>
               <p className="text-xl mb-8 text-blue-100">
-                Streamline your B2B travel operations with our comprehensive platform. 
-                Manage bookings, connect with agencies, and grow your business efficiently.
+                Access the cheapest rates in the market with our B2B platform. Book hotels with custom request invoices, 
+                manage your employees and company-wise bookings, custom markups, and comprehensive travel management.
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
-                <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-                  Get Started
-                </button>
-                <button className="border-2 border-white text-white px-8 py-3 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition-colors">
-                  Learn More
-                </button>
+                {isLoggedIn ? (
+                  <button 
+                    onClick={handleStartBooking}
+                    className="bg-white text-blue-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors flex items-center justify-center"
+                  >
+                    <Hotel className="mr-2 h-5 w-5" />
+                    Start Booking Hotels
+                  </button>
+                ) : (
+                  <>
+                    <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
+                      Get Started
+                    </button>
+                    <button className="border-2 border-white text-white px-8 py-3 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition-colors">
+                      Learn More
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <div className="flex justify-center">
-              <div className="bg-white p-8 rounded-lg shadow-xl max-w-md w-full">
-                <SignupForm onSuccess={handleSignupSuccess} />
-              </div>
+              {isLoggedIn ? (
+                <div className="bg-white p-8 rounded-lg shadow-xl max-w-md w-full text-center">
+                  <div className="mb-6">
+                    <Hotel className="w-16 h-16 text-blue-600 mx-auto mb-4" />
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">Welcome Back!</h3>
+                    <p className="text-gray-600 mb-6">
+                      Ready to book your next hotel? Start exploring our extensive collection of hotels and homestays.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={handleStartBooking}
+                    className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center"
+                  >
+                    <Hotel className="mr-2 h-5 w-5" />
+                    Start Booking Hotels
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-white p-8 rounded-lg shadow-xl max-w-md w-full">
+                  <SignupForm onSuccess={handleSignupSuccess} />
+                </div>
+              )}
             </div>
           </div>
         </div>

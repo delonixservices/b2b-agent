@@ -24,6 +24,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/owner', require('./routes/owner'));
 app.use('/api/company', require('./routes/company'));
 app.use('/api/employees', require('./routes/employee'));
+app.use('/api/hotels', require('./routes/hotels'));
 
 // Health check route
 app.get('/health', (req, res) => {

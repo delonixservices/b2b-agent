@@ -10,11 +10,13 @@ export interface Admin {
 
 export interface Company {
   _id: string;
-  companyName: string;
+  name: string;
+  companyName?: string;
   email: string;
   phone: string;
   address: string;
   isActive: boolean;
+  status: 'pending' | 'verified' | 'deactivated';
   createdAt: string;
   updatedAt: string;
 }
@@ -23,7 +25,57 @@ export interface DashboardStats {
   totalCompanies: number;
   pendingCompanies: number;
   verifiedCompanies: number;
+  deactivatedCompanies: number;
   totalEmployees: number;
+}
+
+export interface Markup {
+  _id: string;
+  name: string;
+  description?: string;
+  type: 'fixed' | 'percentage';
+  value: number;
+  isActive: boolean;
+  createdBy: {
+    _id: string;
+    name: string;
+    username: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarkupResponse {
+  success: boolean;
+  message: string;
+  data: {
+    markup: Markup;
+  };
+}
+
+export interface MarkupsResponse {
+  success: boolean;
+  message: string;
+  data: {
+    markup: Markup | null;
+    exists: boolean;
+  };
+}
+
+export interface MarkupCalculationResponse {
+  success: boolean;
+  message: string;
+  data: {
+    originalAmount: number;
+    markup: {
+      id: string;
+      name: string;
+      type: 'fixed' | 'percentage';
+      value: number;
+      amount: number;
+    };
+    finalAmount: number;
+  };
 }
 
 export interface LoginResponse {
@@ -94,7 +146,7 @@ export const getDashboardStats = async (token: string): Promise<DashboardStats> 
 // Get All Companies
 export const getAllCompanies = async (
   token: string,
-  status?: 'pending' | 'verified',
+  status?: 'pending' | 'verified' | 'deactivated',
   page: number = 1,
   limit: number = 10
 ): Promise<CompaniesResponse> => {
@@ -137,8 +189,8 @@ export const getCompanyById = async (token: string, companyId: string): Promise<
   return response.json();
 };
 
-// Verify/Reject Company
-export const verifyCompany = async (token: string, companyId: string, action: 'verify' | 'reject') => {
+// Verify/Deactivate Company
+export const verifyCompany = async (token: string, companyId: string, action: 'verify' | 'deactivate') => {
   const response = await fetch(`${API_BASE_URL}/api/owner/companies/${companyId}/verify`, {
     method: 'PUT',
     headers: {
@@ -153,4 +205,186 @@ export const verifyCompany = async (token: string, companyId: string, action: 'v
   }
 
   return response.json();
+};
+
+// Create Super Admin (One-time setup)
+export const createSuperAdmin = async (username: string, email: string, password: string, name: string) => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/setup-super-admin`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, email, password, name }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to create super admin');
+  }
+
+  return response.json();
+};
+
+// Utility function to check if user is authenticated
+export const isAuthenticated = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return !!localStorage.getItem('adminToken');
+};
+
+// Utility function to get admin token
+export const getAdminToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('adminToken');
+};
+
+// Utility function to get admin info
+export const getAdminInfo = (): Admin | null => {
+  if (typeof window === 'undefined') return null;
+  const adminInfo = localStorage.getItem('adminInfo');
+  return adminInfo ? JSON.parse(adminInfo) : null;
+};
+
+// Utility function to logout admin
+export const logoutAdmin = (): void => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('adminToken');
+  localStorage.removeItem('adminInfo');
+};
+
+// Markup API Functions
+
+// Get Global Markup
+export const getAllMarkups = async (token: string): Promise<MarkupsResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch markup');
+  }
+
+  return response.json();
+};
+
+// Get Markup by ID
+export const getMarkupById = async (token: string, markupId: string): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch markup details');
+  }
+
+  return response.json();
+};
+
+// Create Markup
+export const createMarkup = async (
+  token: string,
+  markupData: {
+    name: string;
+    description?: string;
+    type: 'fixed' | 'percentage';
+    value: number;
+  }
+): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(markupData),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to create markup');
+  }
+
+  return response.json();
+};
+
+// Update Markup
+export const updateMarkup = async (
+  token: string,
+  markupId: string,
+  markupData: {
+    name?: string;
+    description?: string;
+    type?: 'fixed' | 'percentage';
+    value?: number;
+    isActive?: boolean;
+  }
+): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(markupData),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to update markup');
+  }
+
+  return response.json();
+};
+
+// Delete Markup
+export const deleteMarkup = async (token: string, markupId: string): Promise<{ success: boolean; message: string }> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to delete markup');
+  }
+
+  return response.json();
+};
+
+// Calculate Markup
+export const calculateMarkup = async (
+  token: string,
+  amount: number
+): Promise<MarkupCalculationResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/calculate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ amount }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to calculate markup');
+  }
+
+  return response.json();
+};
+
+// Utility function to refresh dashboard data
+export const refreshDashboardData = async (token: string) => {
+  try {
+    const [stats, companies] = await Promise.all([
+      getDashboardStats(token),
+      getAllCompanies(token, undefined, 1, 10)
+    ]);
+    return { stats, companies };
+  } catch (error) {
+    throw new Error('Failed to refresh dashboard data');
+  }
 }; 

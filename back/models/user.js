@@ -6,11 +6,29 @@ const companySchema = new mongoose.Schema({
   name: { type: String, required: true },
   agencyName: { type: String },
   numPeople: { type: Number },
+  logo: { type: String }, // logo URL
   gst: { type: String }, // file path
   docs: [{ type: String }], // file paths
   password: { type: String, required: true },
   companyNumber: { type: Number, unique: true, sparse: true }, // Company's unique number - not required initially
-  isActive: { type: Boolean, default: false } // Companies are inactive by default until verified by admin
+  isActive: { type: Boolean, default: false }, // Companies are inactive by default until verified by admin
+  status: { type: String, enum: ['pending', 'verified', 'deactivated'], default: 'pending' }, // Company status
+  // Business details
+  businessDetails: {
+    gstNumber: { type: String },
+    panNumber: { type: String },
+    address: { type: String },
+    billingAddress: { type: String },
+    email: { type: String },
+    phone: { type: String },
+    submittedAt: { type: Date }
+  },
+  // Markup configuration
+  markup: {
+    type: { type: String, enum: ['percentage', 'fixed'], default: 'percentage' },
+    value: { type: Number, default: 0, min: 0 },
+    isActive: { type: Boolean, default: true }
+  }
 }, {
   timestamps: true
 });

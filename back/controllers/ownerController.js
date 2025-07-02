@@ -1,5 +1,6 @@
 const Admin = require('../models/admin');
 const { Company, Employee } = require('../models/user');
+const Markup = require('../models/markup');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -79,9 +80,11 @@ const getAllCompanies = async (req, res) => {
     
     let query = {};
     if (status === 'pending') {
-      query.isActive = false;
+      query.status = 'pending';
     } else if (status === 'verified') {
-      query.isActive = true;
+      query.status = 'verified';
+    } else if (status === 'deactivated') {
+      query.status = 'deactivated';
     }
 
     const companies = await Company.find(query)
@@ -152,12 +155,12 @@ const getCompanyById = async (req, res) => {
 const verifyCompany = async (req, res) => {
   try {
     const { companyId } = req.params;
-    const { action } = req.body; // 'verify' or 'reject'
+    const { action } = req.body; // 'verify' or 'deactivate'
 
-    if (!['verify', 'reject'].includes(action)) {
+    if (!['verify', 'deactivate'].includes(action)) {
       return res.status(400).json({
         success: false,
-        message: 'Action must be either "verify" or "reject"'
+        message: 'Action must be either "verify" or "deactivate"'
       });
     }
 
@@ -170,20 +173,27 @@ const verifyCompany = async (req, res) => {
     }
 
     if (action === 'verify') {
+      // This handles both initial verification and reactivation
+      const wasDeactivated = company.status === 'deactivated';
       company.isActive = true;
+      company.status = 'verified';
+      await company.save();
+
+      const message = wasDeactivated ? 'Company reactivated successfully' : 'Company verified successfully';
+      res.status(200).json({
+        success: true,
+        message,
+        data: { company }
+      });
+    } else {
+      // Deactivate the company
+      company.isActive = false;
+      company.status = 'deactivated';
       await company.save();
 
       res.status(200).json({
         success: true,
-        message: 'Company verified successfully',
-        data: { company }
-      });
-    } else {
-      // For rejection, we could either delete the company or keep it inactive
-      // Here we'll keep it inactive but you can modify as needed
-      res.status(200).json({
-        success: true,
-        message: 'Company rejected',
+        message: 'Company deactivated successfully',
         data: { company }
       });
     }
@@ -201,8 +211,9 @@ const verifyCompany = async (req, res) => {
 const getDashboardStats = async (req, res) => {
   try {
     const totalCompanies = await Company.countDocuments();
-    const pendingCompanies = await Company.countDocuments({ isActive: false });
-    const verifiedCompanies = await Company.countDocuments({ isActive: true });
+    const pendingCompanies = await Company.countDocuments({ status: 'pending' });
+    const verifiedCompanies = await Company.countDocuments({ status: 'verified' });
+    const deactivatedCompanies = await Company.countDocuments({ status: 'deactivated' });
     const totalEmployees = await Employee.countDocuments();
 
     res.status(200).json({
@@ -212,6 +223,7 @@ const getDashboardStats = async (req, res) => {
         totalCompanies,
         pendingCompanies,
         verifiedCompanies,
+        deactivatedCompanies,
         totalEmployees
       }
     });
@@ -283,11 +295,290 @@ const createSuperAdmin = async (req, res) => {
   }
 };
 
+// Create or update global markup (only one markup allowed)
+const createMarkup = async (req, res) => {
+  try {
+    const { name, description, type, value } = req.body;
+    const adminId = req.user.id; // From auth middleware
+
+    if (!name || !type || value === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, type, and value are required'
+      });
+    }
+
+    // Validate type
+    if (!['fixed', 'percentage'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type must be either "fixed" or "percentage"'
+      });
+    }
+
+    // Validate value based on type
+    if (type === 'percentage' && (value < 0 || value > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Percentage value must be between 0 and 100'
+      });
+    }
+
+    if (type === 'fixed' && value < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Fixed value must be greater than or equal to 0'
+      });
+    }
+
+    // Check if markup already exists
+    let markup = await Markup.findOne();
+    
+    if (markup) {
+      // Update existing markup
+      markup.name = name;
+      markup.description = description;
+      markup.type = type;
+      markup.value = value;
+      markup.createdBy = adminId;
+      
+      await markup.save();
+      
+      res.status(200).json({
+        success: true,
+        message: 'Markup updated successfully',
+        data: { markup }
+      });
+    } else {
+      // Create new markup
+      markup = new Markup({
+        name,
+        description,
+        type,
+        value,
+        createdBy: adminId
+      });
+
+      await markup.save();
+
+      res.status(201).json({
+        success: true,
+        message: 'Markup created successfully',
+        data: { markup }
+      });
+    }
+
+  } catch (error) {
+    console.error('Create markup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get global markup
+const getAllMarkups = async (req, res) => {
+  try {
+    const markup = await Markup.findOne()
+      .populate('createdBy', 'name username');
+
+    res.status(200).json({
+      success: true,
+      message: markup ? 'Markup retrieved successfully' : 'No markup found',
+      data: {
+        markup,
+        exists: !!markup
+      }
+    });
+
+  } catch (error) {
+    console.error('Get markup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get markup by ID
+const getMarkupById = async (req, res) => {
+  try {
+    const { markupId } = req.params;
+
+    const markup = await Markup.findById(markupId)
+      .populate('createdBy', 'name username');
+
+    if (!markup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Markup not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Markup retrieved successfully',
+      data: { markup }
+    });
+
+  } catch (error) {
+    console.error('Get markup by ID error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Update markup
+const updateMarkup = async (req, res) => {
+  try {
+    const { markupId } = req.params;
+    const { name, description, type, value, isActive } = req.body;
+
+    const markup = await Markup.findById(markupId);
+    if (!markup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Markup not found'
+      });
+    }
+
+    // Validate type if provided
+    if (type && !['fixed', 'percentage'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type must be either "fixed" or "percentage"'
+      });
+    }
+
+    // Validate value based on type
+    if (value !== undefined) {
+      const markupType = type || markup.type;
+      if (markupType === 'percentage' && (value < 0 || value > 100)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Percentage value must be between 0 and 100'
+        });
+      }
+
+      if (markupType === 'fixed' && value < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Fixed value must be greater than or equal to 0'
+        });
+      }
+    }
+
+    // Update fields
+    if (name !== undefined) markup.name = name;
+    if (description !== undefined) markup.description = description;
+    if (type !== undefined) markup.type = type;
+    if (value !== undefined) markup.value = value;
+    if (isActive !== undefined) markup.isActive = isActive;
+
+    await markup.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Markup updated successfully',
+      data: { markup }
+    });
+
+  } catch (error) {
+    console.error('Update markup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Delete markup (disabled - global markup cannot be deleted)
+const deleteMarkup = async (req, res) => {
+  try {
+    res.status(403).json({
+      success: false,
+      message: 'Global markup cannot be deleted. You can only update it.'
+    });
+  } catch (error) {
+    console.error('Delete markup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Calculate markup for a given amount
+const calculateMarkup = async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid amount is required'
+      });
+    }
+
+    // Get the global markup
+    const markup = await Markup.findOne({ isActive: true });
+
+    if (!markup) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active markup found'
+      });
+    }
+
+    let markupAmount = 0;
+    
+    if (markup.type === 'percentage') {
+      markupAmount = (amount * markup.value) / 100;
+    } else {
+      markupAmount = markup.value;
+    }
+
+    const finalAmount = amount + markupAmount;
+
+    res.status(200).json({
+      success: true,
+      message: 'Markup calculated successfully',
+      data: {
+        originalAmount: amount,
+        markup: {
+          id: markup._id,
+          name: markup.name,
+          type: markup.type,
+          value: markup.value,
+          amount: markupAmount
+        },
+        finalAmount
+      }
+    });
+
+  } catch (error) {
+    console.error('Calculate markup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   ownerLogin,
   getAllCompanies,
   getCompanyById,
   verifyCompany,
   getDashboardStats,
-  createSuperAdmin
+  createSuperAdmin,
+  createMarkup,
+  getAllMarkups,
+  getMarkupById,
+  updateMarkup,
+  deleteMarkup,
+  calculateMarkup
 }; 

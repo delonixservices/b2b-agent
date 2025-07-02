@@ -1,5 +1,6 @@
 const { Company, Employee } = require('../models/user');
 const Hotel = require('../models/hotels');
+const MarkupService = require('../services/markupService');
 
 // Get company dashboard data (company only)
 const getCompanyDashboard = async (req, res) => {
@@ -296,6 +297,123 @@ const updateEmployeeProfile = async (req, res) => {
   }
 };
 
+// MARKUP CONTROLLER FUNCTIONS
+
+// Set markup for company (company only)
+const setCompanyMarkup = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const { type, value, isActive } = req.body;
+    
+    if (!type || value === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Markup type and value are required'
+      });
+    }
+    
+    const result = await MarkupService.setMarkup(companyId, {
+      type,
+      value: parseFloat(value),
+      isActive
+    });
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Set company markup error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to set markup'
+    });
+  }
+};
+
+// Get markup for company (company only)
+const getCompanyMarkup = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    
+    const result = await MarkupService.getMarkup(companyId);
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Get company markup error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to get markup'
+    });
+  }
+};
+
+// Calculate markup for a given price (company only)
+const calculateMarkup = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const { basePrice } = req.body;
+    
+    if (!basePrice || isNaN(basePrice)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid base price is required'
+      });
+    }
+    
+    const result = await MarkupService.calculateMarkup(companyId, parseFloat(basePrice));
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Calculate markup error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to calculate markup'
+    });
+  }
+};
+
+// Toggle markup active status (company only)
+const toggleMarkup = async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const { isActive } = req.body;
+    
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isActive must be a boolean value'
+      });
+    }
+    
+    const result = await MarkupService.toggleMarkup(companyId, isActive);
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Toggle markup error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to toggle markup'
+    });
+  }
+};
+
+// Get all employees for a company (admin only)
+const getEmployeesByCompanyId = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const employees = await Employee.find({ company: companyId }).select('-password');
+    res.status(200).json({
+      success: true,
+      message: 'Employees retrieved successfully',
+      data: { employees }
+    });
+  } catch (error) {
+    console.error('Get employees by company ID error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   getCompanyDashboard,
   getCompanyProfile,
@@ -303,5 +421,10 @@ module.exports = {
   getCompanyBookings,
   getCompanyRevenue,
   getEmployeeProfile,
-  updateEmployeeProfile
+  updateEmployeeProfile,
+  setCompanyMarkup,
+  getCompanyMarkup,
+  calculateMarkup,
+  toggleMarkup,
+  getEmployeesByCompanyId
 }; 

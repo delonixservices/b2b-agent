@@ -7,10 +7,29 @@ import { Menu, X, Wallet } from 'lucide-react'
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setIsLoggedIn(!!localStorage.getItem('token'))
+      // Try to get logo from localStorage (support both string and JSON format)
+      const logoData = localStorage.getItem('companyLogo');
+      if (logoData) {
+        try {
+          // Try JSON format
+          const parsed = JSON.parse(logoData);
+          if (parsed && parsed.url) {
+            setLogoUrl(parsed.url);
+          } else {
+            setLogoUrl(logoData);
+          }
+        } catch {
+          // Fallback: just a string URL
+          setLogoUrl(logoData);
+        }
+      } else {
+        setLogoUrl(null);
+      }
     }
   }, [])
 
@@ -19,8 +38,17 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex items-center">
-            <Link href="/" className="flex-shrink-0 flex items-center">
-              <span className="text-2xl font-bold text-blue-600">B2B Our Many Name</span>
+            <Link href="/" className="flex-shrink-0 flex items-center min-h-[40px]">
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt="Company Logo"
+                  className="max-h-10 h-10 w-auto object-contain"
+                  style={{ maxHeight: 40 }}
+                />
+              ) : (
+                <span className="text-2xl font-bold text-blue-600">my.tripbazaar</span>
+              )}
             </Link>
           </div>
           
