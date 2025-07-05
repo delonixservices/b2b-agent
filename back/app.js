@@ -5,9 +5,6 @@ const connectDB = require('./config/mongo');
 
 const app = express();
 
-// Connect to MongoDB
-connectDB();
-
 // Middleware
 app.use(cors({
   origin: '*',
@@ -18,18 +15,34 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/admin', require('./routes/admin'));
-app.use('/api/owner', require('./routes/owner'));
-app.use('/api/company', require('./routes/company'));
-app.use('/api/employees', require('./routes/employee'));
-app.use('/api/hotels', require('./routes/hotels'));
-
 // Health check route
 app.get('/health', (req, res) => {
   res.json({ message: 'Server is running' });
 });
 
 const PORT = process.env.PORT || 3334;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Initialize the application
+const initializeApp = async () => {
+  try {
+    // Connect to MongoDB first
+    await connectDB();
+    
+    // Load routes after database connection is established
+    app.use('/api/auth', require('./routes/auth'));
+    app.use('/api/admin', require('./routes/admin'));
+    app.use('/api/owner', require('./routes/owner'));
+    app.use('/api/company', require('./routes/company'));
+    app.use('/api/employees', require('./routes/employee'));
+    app.use('/api/hotels', require('./routes/hotels'));
+    
+    // Start the server
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  } catch (error) {
+    console.error('Failed to initialize application:', error);
+    process.exit(1);
+  }
+};
+
+// Start the application
+initializeApp();

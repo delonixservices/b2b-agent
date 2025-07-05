@@ -5,6 +5,11 @@ class ApiService {
     this.baseURL = process.env.HOTEL_APIURL;
     this.authKey = process.env.HOTEL_APIAUTH;
     
+    console.log('API Service initialized with:', {
+      baseURL: this.baseURL ? 'Set' : 'Not set',
+      authKey: this.authKey ? 'Set' : 'Not set'
+    });
+    
     if (!this.baseURL) {
       throw new Error('HOTEL_APIURL environment variable is required');
     }
@@ -39,6 +44,11 @@ class ApiService {
 
   // Generic POST request
   async post(endpoint, data = {}) {
+    console.log('=== API POST REQUEST START ===');
+    console.log('Endpoint:', endpoint);
+    console.log('Base URL:', this.baseURL);
+    console.log('Full URL:', this.baseURL + endpoint);
+    
     try {
       // Add authentication to the request payload
       const requestPayload = {
@@ -48,15 +58,36 @@ class ApiService {
         }
       };
       
-      console.log('info: Making API request:', {
-        params: JSON.stringify(requestPayload),
-        url: this.baseURL + endpoint
-      });
+      console.log('Request payload:', JSON.stringify(requestPayload, null, 2));
+      console.log('Request timestamp:', new Date().toISOString());
+      
+      const requestStartTime = Date.now();
       
       const response = await this.client.post(endpoint, requestPayload);
+      
+      const requestEndTime = Date.now();
+      console.log('API request completed in:', requestEndTime - requestStartTime, 'ms');
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      console.log('Response data keys:', Object.keys(response.data || {}));
+      console.log('=== API POST REQUEST END ===');
+      
       return response.data;
     } catch (error) {
-      console.error('API POST request failed:', error.message);
+      console.error('=== API POST REQUEST ERROR ===');
+      console.error('Error type:', error.constructor.name);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Error response status:', error.response?.status);
+      console.error('Error response status text:', error.response?.statusText);
+      console.error('Error response data:', error.response?.data);
+      console.error('Error config:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        timeout: error.config?.timeout,
+        headers: error.config?.headers
+      });
+      console.error('=== API POST REQUEST ERROR END ===');
       throw error;
     }
   }

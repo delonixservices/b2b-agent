@@ -1,8 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const suggestController = require('../controllers/suggestController');
+const hotelController = require('../controllers/hotelConrtoller');
+const { isAuth, isCompanyOrEmployee, isActive } = require('../middleware/isauth');
 
-// Suggest API endpoint
-router.post('/suggest', suggestController.suggest);
+// All hotel routes require authentication for company/employee access
+router.post('/suggest', isAuth, isCompanyOrEmployee, isActive, hotelController.suggest);
+router.post('/search', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotels);
+router.post('/packages', isAuth, isCompanyOrEmployee, isActive, hotelController.searchPackages);
+router.post('/bookingpolicy', isAuth, isCompanyOrEmployee, isActive, hotelController.bookingpolicy);
+router.post('/prebook', isAuth, isCompanyOrEmployee, isActive, hotelController.prebook);
 
 module.exports = router;
