@@ -1050,7 +1050,13 @@ res.json(dataObj);
 };
 
 exports.bookingpolicy = async (req, res, next) => {
+  console.log('=== BOOKING POLICY REQUEST START ===');
   console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Request method:', req.method);
+  console.log('Request URL:', req.originalUrl);
+  console.log('Request timestamp:', new Date().toISOString());
   
   const transaction_id = req.body.transaction_id;
   const search = req.body.search;
@@ -1070,9 +1076,33 @@ exports.bookingpolicy = async (req, res, next) => {
   let hotel;
   
   try {
-    hotel = await Hotel.findOne({ id: hotelId });
+    // Try to find hotel by different possible ID formats
+    let hotel = await Hotel.findOne({ id: hotelId });
+    
+    // If not found by string id, try as ObjectId
+    if (!hotel) {
+      try {
+        hotel = await Hotel.findById(hotelId);
+        console.log('Hotel found by ObjectId:', hotel ? 'Yes' : 'No');
+      } catch (objectIdError) {
+        console.log('Invalid ObjectId format:', objectIdError.message);
+      }
+    }
+    
+    // If still not found, try by hotelId field
+    if (!hotel) {
+      hotel = await Hotel.findOne({ hotelId: hotelId });
+      console.log('Hotel found by hotelId field:', hotel ? 'Yes' : 'No');
+    }
+    
     if (!hotel) {
       console.error('Hotel not found with id:', hotelId);
+      console.error('Tried searching by: id field, ObjectId, and hotelId field');
+      
+      // Log available hotels for debugging (limit to 5)
+      const availableHotels = await Hotel.find({}).limit(5).select('id hotelId name');
+      console.error('Available hotels in database:', availableHotels);
+      
       return res.status(404).json({
         'message': 'Hotel not found'
       });
@@ -1085,7 +1115,10 @@ exports.bookingpolicy = async (req, res, next) => {
       bookingKey,
       hotelFound: !!hotel,
       packageFound: !!package,
-      totalPackages: hotel?.rates?.packages?.length
+      totalPackages: hotel?.rates?.packages?.length,
+      hotelIdType: typeof hotelId,
+      hotelIdLength: hotelId ? hotelId.length : 0,
+      hotelIdFormat: hotelId ? (hotelId.match(/^[0-9a-fA-F]{24}$/) ? 'ObjectId' : 'String') : 'null'
     });
 
     if (!package) {
@@ -1291,12 +1324,25 @@ exports.bookingpolicy = async (req, res, next) => {
       version: "v1"
     };
     
+    console.log('=== BOOKING POLICY REQUEST COMPLETED ===');
+    console.log('Response sent successfully');
+    console.log('Response timestamp:', new Date().toISOString());
+    
     res.json(formattedResponse);
   } catch (err) {
-    console.error('BookingPolicy Error:', {
-      error: err.message,
-      stack: err.stack
+    console.error('=== BOOKING POLICY REQUEST ERROR ===');
+    console.error('Error details:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      response: err.response ? {
+        status: err.response.status,
+        statusText: err.response.statusText,
+        data: err.response.data
+      } : null
     });
+    console.error('Error timestamp:', new Date().toISOString());
+    
     return res.status(500).json({
       'message': err.message
     });
@@ -1308,6 +1354,7 @@ exports.prebook = async (req, res, next) => {
   const transaction_id = req.body.transaction_id;
   const contactDetail = req.body.contactDetail;
   const guests = req.body.guest;
+  const hotelId = req.body.hotelId; // Add hotelId from request body
   
   console.log('Prebook request from:', req.user.type, 'ID:', req.user.id);
   console.log('Request body:', JSON.stringify(req.body, null, 2));
@@ -1332,7 +1379,26 @@ exports.prebook = async (req, res, next) => {
     });
   }
   
-  contactDetail.mobile = contactDetail.mobile.toString();
+  // Clean and validate contact details
+  contactDetail.name = contactDetail.name.toString().trim();
+  contactDetail.last_name = contactDetail.last_name.toString().trim();
+  contactDetail.email = contactDetail.email.toString().trim().toLowerCase();
+  contactDetail.mobile = contactDetail.mobile.toString().trim();
+  
+  // Basic email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(contactDetail.email)) {
+    return res.status(400).json({
+      'message': 'Invalid email format.'
+    });
+  }
+  
+  // Basic mobile validation (at least 10 digits)
+  if (contactDetail.mobile.length < 10) {
+    return res.status(400).json({
+      'message': 'Invalid mobile number format.'
+    });
+  }
   
   // User is already authenticated via middleware
   // req.user contains the authenticated user information
@@ -1404,6 +1470,14 @@ exports.prebook = async (req, res, next) => {
   const hotelPackage = bookingPolicy.booking_policy.package;
   const hotel = bookingPolicy.hotel;
   
+  // Validate hotel package data
+  if (!hotelPackage || !hotelPackage.booking_key) {
+    console.error('Invalid hotel package data:', hotelPackage);
+    return res.status(500).json({
+      'message': 'Invalid hotel package data. Please try again.'
+    });
+  }
+  
   // Get base values from hotel package after markup has been applied
   let baseAmount = +hotelPackage.base_amount;
   let serviceComponent = +hotelPackage.service_component;
@@ -1430,39 +1504,102 @@ exports.prebook = async (req, res, next) => {
     client_commission: client_commission,
     base_amount_markup_excluded: base_amount_markup_excluded,
     markup_applied: markup_applied,
-    currency: hotelPackage.chargeable_rate_currency
+    currency: hotelPackage.chargeable_rate_currency || "INR"
   };
   
-  const transaction = new Transaction();
+  // Validate all required data before creating transaction
+  const requiredFields = {
+    booking_policy_id,
+    transaction_id,
+    contactDetail,
+    hotelPackage,
+    pricing
+  };
   
-  // Set user information based on authentication type
-  transaction.userType = userType;
-  
-  if (userType === 'company') {
-    transaction.companyId = userId;
-  } else if (userType === 'employee') {
-    transaction.employeeId = userId;
-    // Also store the company ID for employee bookings
-    const employee = await Employee.findById(userId);
-    if (employee && employee.company) {
-      transaction.companyId = employee.company;
-    }
+  const missingFields = Object.entries(requiredFields)
+    .filter(([key, value]) => !value)
+    .map(([key]) => key);
+    
+  if (missingFields.length > 0) {
+    console.error('Missing required fields:', missingFields);
+    return res.status(400).json({
+      'message': `Missing required fields: ${missingFields.join(', ')}`
+    });
   }
   
-  transaction.search = bookingPolicy.search;
-  transaction.booking_policy = bookingPolicy.booking_policy;
-  transaction.transaction_identifier = transaction_id;
-  transaction.contactDetail = contactDetail;
-  transaction.hotel = hotel.toObject();
-  transaction.hotelPackage = hotelPackage;
-  transaction.status = 0;
-  transaction.pricing = pricing;
+  // Validate booking policy search data
+  if (!bookingPolicy.search || !bookingPolicy.search.room_count) {
+    console.error('Invalid booking policy search data:', bookingPolicy.search);
+    return res.status(400).json({
+      'message': 'Invalid booking policy search data.'
+    });
+  }
+  
+  let transaction;
+  try {
+    transaction = new Transaction();
+    
+    // Set user information based on authentication type
+    transaction.userType = userType;
+    
+    if (userType === 'company') {
+      transaction.companyId = userId;
+    } else if (userType === 'employee') {
+      transaction.employeeId = userId;
+      // Also store the company ID for employee bookings
+      const employee = await Employee.findById(userId);
+      if (employee && employee.company) {
+        transaction.companyId = employee.company;
+      }
+    }
+    
+    // Set required fields for transaction
+    transaction.booking_policy_id = booking_policy_id;
+    transaction.search = bookingPolicy.search;
+    transaction.booking_policy = bookingPolicy.booking_policy;
+    transaction.transaction_identifier = transaction_id;
+    transaction.contactDetail = contactDetail;
+    
+    // Safely handle hotel object
+    if (hotel && typeof hotel.toObject === 'function') {
+      transaction.hotel = hotel.toObject();
+    } else if (hotel) {
+      transaction.hotel = hotel;
+    } else {
+      // Create a minimal hotel object if hotel is not available
+      const fallbackHotelId = hotelId || bookingPolicy.search?.hotel_id_list?.[0] || 'unknown';
+      transaction.hotel = {
+        id: fallbackHotelId,
+        name: 'Hotel Information Not Available'
+      };
+    }
+    
+    transaction.hotelPackage = hotelPackage;
+    transaction.status = 0;
+    transaction.pricing = pricing;
+    
+    console.log('Transaction object created successfully');
+  } catch (transactionError) {
+    console.error('Error creating transaction object:', transactionError);
+    return res.status(500).json({
+      'message': 'Error creating transaction object',
+      'error': transactionError.message
+    });
+  }
   
   // for now passing same same lead guest for every room
   const room_lead_guests = [];
   let room_guests = [];
   
-  const roomCount = transaction.search.room_count;
+  const roomCount = parseInt(transaction.search.room_count) || 1;
+  
+  // Validate room count
+  if (roomCount < 1 || roomCount > 10) {
+    console.error('Invalid room count:', roomCount);
+    return res.status(400).json({
+      'message': 'Invalid room count. Must be between 1 and 10.'
+    });
+  }
   
   for (let i = 0; i < roomCount; i++) {
     const leadGuest = {
@@ -1507,6 +1644,17 @@ exports.prebook = async (req, res, next) => {
   }
   
   console.log('Prebook payload:', JSON.stringify(payload, null, 2));
+  console.log('Transaction object before API call:', {
+    booking_policy_id: transaction.booking_policy_id,
+    transaction_identifier: transaction.transaction_identifier,
+    userType: transaction.userType,
+    hasSearch: !!transaction.search,
+    hasBookingPolicy: !!transaction.booking_policy,
+    hasHotel: !!transaction.hotel,
+    hasHotelPackage: !!transaction.hotelPackage,
+    hasContactDetail: !!transaction.contactDetail,
+    hasPricing: !!transaction.pricing
+  });
   try {
     const data = await Api.post("/prebook", payload);
     
@@ -1514,13 +1662,90 @@ exports.prebook = async (req, res, next) => {
     if (data && data.data && data.data !== undefined) {
       try {
         transaction.prebook_response = data;
+        
+        // Log transaction object before saving for debugging
+        console.log('Transaction object to save:', {
+          booking_policy_id: transaction.booking_policy_id,
+          transaction_identifier: transaction.transaction_identifier,
+          userType: transaction.userType,
+          companyId: transaction.companyId,
+          employeeId: transaction.employeeId,
+          status: transaction.status,
+          hasSearch: !!transaction.search,
+          hasBookingPolicy: !!transaction.booking_policy,
+          hasHotel: !!transaction.hotel,
+          hasHotelPackage: !!transaction.hotelPackage,
+          hasContactDetail: !!transaction.contactDetail,
+          hasPricing: !!transaction.pricing
+        });
+        
+        // Validate transaction object before saving
+        if (!transaction.booking_policy_id || !transaction.transaction_identifier) {
+          console.error('Invalid transaction object - missing required fields');
+          return res.status(500).json({
+            'message': 'Invalid transaction object - missing required fields'
+          });
+        }
+        
+        // Additional validation for transaction object structure
+        const fieldValidations = [
+          { field: 'booking_policy_id', validator: (value) => value && typeof value === 'string' && value.trim() !== '' },
+          { field: 'transaction_identifier', validator: (value) => value && typeof value === 'string' && value.trim() !== '' },
+          { field: 'search', validator: (value) => value && typeof value === 'object' },
+          { field: 'booking_policy', validator: (value) => value && typeof value === 'object' },
+          { field: 'hotel', validator: (value) => value && typeof value === 'object' },
+          { field: 'hotelPackage', validator: (value) => value && typeof value === 'object' },
+          { field: 'contactDetail', validator: (value) => value && typeof value === 'object' },
+          { field: 'pricing', validator: (value) => value && typeof value === 'object' },
+          { field: 'status', validator: (value) => value !== undefined && value !== null && typeof value === 'number' }
+        ];
+        
+        const missingTransactionFields = fieldValidations
+          .filter(({ field, validator }) => !validator(transaction[field]))
+          .map(({ field }) => field);
+        if (missingTransactionFields.length > 0) {
+          console.error('Transaction object missing fields:', missingTransactionFields);
+          return res.status(500).json({
+            'message': `Transaction object missing fields: ${missingTransactionFields.join(', ')}`
+          });
+        }
+        
+        // Validate that transaction is a valid Mongoose document
+        if (!transaction || typeof transaction.save !== 'function') {
+          console.error('Invalid transaction object - not a Mongoose document');
+          return res.status(500).json({
+            'message': 'Invalid transaction object - not a Mongoose document'
+          });
+        }
+        
         await transaction.save();
+        console.log('Transaction saved successfully with ID:', transaction._id);
+        
         data.transactionid = transaction._id;
         res.json(data);
       } catch (e) {
-        console.error('Error saving transaction:', e.message);
+        console.error('Error saving transaction:', {
+          message: e.message,
+          stack: e.stack,
+          name: e.name,
+          code: e.code
+        });
+        
+        // Check for specific validation errors
+        if (e.name === 'ValidationError') {
+          console.error('Validation errors:', e.errors);
+          return res.status(400).json({
+            'message': 'Invalid transaction data',
+            'errors': Object.keys(e.errors).map(key => ({
+              field: key,
+              message: e.errors[key].message
+            }))
+          });
+        }
+        
         res.status(500).json({
-          'message': 'Cannot book selected hotel - Database error'
+          'message': 'Cannot book selected hotel - Database error',
+          'error': e.message
         });
       }
     } else {
@@ -1534,6 +1759,37 @@ exports.prebook = async (req, res, next) => {
     console.error('Prebook API error:', err);
     res.status(500).json({
       'message': `Booking failed: ${err.message}`
+    });
+  }
+};
+
+exports.getTransactionIdentifier = async (req, res, next) => {
+  console.log('=== GET TRANSACTION IDENTIFIER REQUEST START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  
+  try {
+    // Generate a unique transaction identifier
+    const timestamp = Date.now();
+    const randomString = Math.random().toString(36).substr(2, 9);
+    const transaction_identifier = `TXN_${timestamp}_${randomString}`;
+    
+    console.log('Generated transaction identifier:', transaction_identifier);
+    
+    res.json({
+      success: true,
+      message: 'Transaction identifier generated successfully',
+      data: {
+        transaction_identifier: transaction_identifier
+      }
+    });
+    
+  } catch (error) {
+    console.error('=== ERROR IN GET TRANSACTION IDENTIFIER FUNCTION ===');
+    console.error('Error details:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

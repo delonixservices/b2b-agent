@@ -118,6 +118,7 @@ export default function HotelDetailsPage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedPackage, setSelectedPackage] = useState<HotelPackage | null>(null)
   const [userToken, setUserToken] = useState<string | null>(null)
+  const [transactionIdentifier, setTransactionIdentifier] = useState<string | null>(null)
 
   // Utility function to handle authentication errors
   const handleAuthError = () => {
@@ -229,6 +230,10 @@ export default function HotelDetailsPage() {
         if (data.data.hotel.rates.packages.length > 0) {
           setSelectedPackage(data.data.hotel.rates.packages[0])
         }
+        // Store the transaction identifier from the packages API response
+        if (data.data.transaction_identifier) {
+          setTransactionIdentifier(data.data.transaction_identifier)
+        }
       } else {
         throw new Error('Failed to fetch hotel details')
       }
@@ -259,6 +264,12 @@ export default function HotelDetailsPage() {
       adults: searchParams.get('adults') || '1',
       children: searchParams.get('children') || '0',
     })
+    
+    // Add transaction identifier if available
+    if (transactionIdentifier) {
+      params.append('transactionId', transactionIdentifier)
+    }
+    
     router.push(`/hotels/review?${params.toString()}`)
   }
 

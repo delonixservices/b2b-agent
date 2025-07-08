@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
-import { hotelApi, BookingPolicyResponse, PrebookRequest } from '../../services/hotelApi'
+import { hotelApi, BookingPolicyResponse, PrebookRequest, ConfirmBookingRequest } from '../../services/hotelApi'
 import { isAuthenticated, clearAuthData, getAuthToken } from '../../utils/authUtils'
 
 interface ContactDetail {
@@ -120,8 +120,8 @@ export default function ReviewPage() {
 
       const token = getAuthToken()
 
-      // Generate a transaction ID (you might want to get this from your backend)
-      const transaction_id = `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      // Get transaction ID from URL parameters (passed from hotel details page)
+      const transaction_id = searchParams.get('transactionId') || `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
       const requestData = {
         transaction_id,
@@ -248,19 +248,22 @@ export default function ReviewPage() {
       console.log('Prebooking with data:', prebookData)
       console.log('Using authentication token:', token ? 'Token present' : 'No token')
 
-      const response = await hotelApi.prebookHotel(prebookData, token!)
+      const prebookResponse = await hotelApi.prebookHotel(prebookData, token!)
       
-      console.log('Prebook response:', response)
+      console.log('Prebook response:', prebookResponse)
 
-      // Redirect to payment or confirmation page
-      if (response.transactionid) {
-        router.push(`/hotels/confirmation?transactionId=${response.transactionid}`)
+      // After prebook, redirect to process-payment if booking_id is present
+      const bookingId = prebookResponse.data?.booking_id || prebookResponse.data?.prebook_id || prebookResponse.data?.id || prebookResponse.data?.transactionid;
+      if (bookingId) {
+        window.location.href = `http://localhost:3334/api/hotels/process-payment/${bookingId}`;
+        return;
       } else {
-        router.push('/hotels/confirmation?status=success')
+        setError('Booking ID not found for payment processing');
+        return;
       }
 
     } catch (err: any) {
-      console.error('Error during prebook:', err)
+      console.error('Error during booking process:', err)
       
       // Handle authentication errors specifically
       if (err instanceof Error && err.message.includes('401')) {

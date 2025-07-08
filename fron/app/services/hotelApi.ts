@@ -217,6 +217,19 @@ export interface PrebookResponse {
   transactionid?: string;
 }
 
+export interface ConfirmBookingRequest {
+  transactionId: string;
+  bookingId: string;
+}
+
+export interface ConfirmBookingResponse {
+  success: boolean;
+  message: string;
+  paymentUrl?: string;
+  bookingId: string;
+  status: 'confirmed' | 'paid' | 'payment_pending';
+}
+
 // Hotel API functions
 export const hotelApi = {
   // Search hotels
@@ -389,6 +402,39 @@ export const hotelApi = {
         throw new Error('401: Authentication required');
       }
       throw new Error(`Failed to get suggestions: ${response.status}`);
+    }
+
+    return response.json();
+  },
+
+  // Confirm booking
+  confirmBooking: async (requestData: ConfirmBookingRequest, token?: string): Promise<ConfirmBookingResponse> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/hotels/confirm-booking`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestData),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('401: Authentication required');
+      }
+      
+      // Try to get error message from response
+      try {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to confirm booking: ${response.status}`);
+      } catch (parseError) {
+        throw new Error(`Failed to confirm booking: ${response.status}`);
+      }
     }
 
     return response.json();
