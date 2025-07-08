@@ -126,7 +126,6 @@ export default function BookingModal({
         booking_policy_id: bookingPolicy.data.booking_policy_id || '',
         transaction_id: transactionIdentifier || '',
         contactDetail,
-        coupon,
         guest: guests
       }
 

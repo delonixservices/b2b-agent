@@ -29,10 +29,10 @@ export default function HotelCard({ hotel }: HotelCardProps) {
 
   const getMinPrice = (hotel: Hotel) => {
     const prices = hotel.rates.packages.map(pkg => {
-      if (pkg.chargeable_rate > 0) return pkg.chargeable_rate
-      if (pkg.chargeable_rate_with_tax_excluded > 0) return pkg.chargeable_rate_with_tax_excluded
-      if (pkg.room_rate > 0) return pkg.room_rate
-      return pkg.base_amount
+      if (pkg.chargeable_rate && pkg.chargeable_rate > 0) return pkg.chargeable_rate
+      if (pkg.chargeable_rate_with_tax_excluded && pkg.chargeable_rate_with_tax_excluded > 0) return pkg.chargeable_rate_with_tax_excluded
+      if (pkg.room_rate && pkg.room_rate > 0) return pkg.room_rate
+      return pkg.base_amount || 0
     }).filter(price => price > 0)
     
     return prices.length > 0 ? Math.min(...prices) : 0
@@ -175,9 +175,9 @@ export default function HotelCard({ hotel }: HotelCardProps) {
                 </div>
                 <div className="text-right">
                   <div className="font-semibold text-blue-600">
-                    {formatPrice(pkg.chargeable_rate || pkg.chargeable_rate_with_tax_excluded || pkg.room_rate || pkg.base_amount)}
+                    {formatPrice(pkg.chargeable_rate || pkg.chargeable_rate_with_tax_excluded || pkg.room_rate || pkg.base_amount || 0)}
                   </div>
-                  {pkg.markup_amount > 0 && (
+                  {pkg.markup_amount && pkg.markup_amount > 0 && (
                     <div className="text-xs text-gray-500">
                       +{formatPrice(pkg.markup_amount)} markup
                     </div>

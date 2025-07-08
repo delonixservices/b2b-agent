@@ -221,7 +221,8 @@ exports.paymentResponseHandler = async (req, res, next) => {
 
     const smsGuest = `Dear ${contactDetail.name}, Your Hotel ${hotel.originalName} has been booked and the bookingId is ${bookingId}. Thank you !`;
 
-    const smsAdmin = `Hello Admin, new booking received. bookingId: ${bookingId}, Guest name: ${contactDetail.name} ${contactDetail.last_name}, Hotel name: ${hotel.originalName}, Amount: ${pricing.currency} ${pricing.total_chargeable_amount}, Payment mode: ${queryStrings.payment_mode}, Location: ${hotel.location.address}, ${hotel.location.city}, ${hotel.location.country ? hotel.location.country : hotel.location.countryCode}`;
+    const locationInfo = hotel.location ? `${hotel.location.address || ''}, ${hotel.location.city || ''}, ${hotel.location.country || hotel.location?.countryCode || ''}` : 'Location not available';
+    const smsAdmin = `Hello Admin, new booking received. bookingId: ${bookingId}, Guest name: ${contactDetail.name} ${contactDetail.last_name}, Hotel name: ${hotel.originalName}, Amount: ${pricing.currency} ${pricing.total_chargeable_amount}, Payment mode: ${queryStrings.payment_mode}, Location: ${locationInfo}`;
 
     try {
       const guestRes = Sms.send(contactDetail.mobile, smsGuest);
@@ -280,7 +281,7 @@ exports.paymentResponseHandler = async (req, res, next) => {
     const msgAdmin = {
       to: 'ankit.phondani@delonixtravel.com',
       subject: 'TripBazaar Confim Ticket',
-      html: `Hello Admin, new booking received. bookingId: ${bookingId}, Hotel name: ${hotel.originalName}, Amount: ${pricing.currency} ${pricing.total_chargeable_amount}, Payment mode: ${queryStrings.payment_mode}, Location: ${hotel.location.address}, ${hotel.location.city}, ${hotel.location.country ? hotel.location.country : hotel.location.countryCode}`,
+      html: `Hello Admin, new booking received. bookingId: ${bookingId}, Hotel name: ${hotel.originalName}, Amount: ${pricing.currency} ${pricing.total_chargeable_amount}, Payment mode: ${queryStrings.payment_mode}, Location: ${locationInfo}`,
       attachments: [{
           filename: 'Invoice.pdf',
           content: invoiceBuffer,
