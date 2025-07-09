@@ -9,6 +9,11 @@ const { Employee } = require('../models/user');
 const BookingPolicy = require('../models/booking');
 const Transaction = require('../models/hoteltransactions');
 const markupService = require('../services/markupService');
+const walletService = require('../services/walletService');
+const Mail = require('../services/mailService');
+const Sms = require('../services/smsService');
+const invoice = require('../utils/invoice');
+const voucher = require('../utils/voucher');
 
 const limitRegionIds = (regionIds, maxCount = 50) => {
     if (!regionIds || typeof regionIds !== 'string') {
@@ -1856,6 +1861,230 @@ exports.getTransactionIdentifier = async (req, res, next) => {
     return res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+exports.processWalletPayment = async (req, res, next) => {
+  console.log('=== WALLET PAYMENT PROCESS START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  
+  const { transactionId, bookingId } = req.body;
+  
+  if (!transactionId || !bookingId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Transaction ID and Booking ID are required'
+    });
+  }
+  
+  try {
+    // Find the transaction
+    const transaction = await Transaction.findOne({
+      _id: transactionId,
+      'prebook_response.data.booking_id': bookingId
+    });
+    
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
+      });
+    }
+    
+    // Check if user is authorized to pay for this transaction
+    if (req.user.type === 'company' && transaction.companyId?.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to pay for this transaction'
+      });
+    }
+    
+    if (req.user.type === 'employee' && transaction.employeeId?.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to pay for this transaction'
+      });
+    }
+    
+    // Check if payment is already done
+    if (transaction.payment_response && transaction.payment_response.order_status === "Success") {
+      return res.status(422).json({
+        success: false,
+        message: 'Payment has already been processed for this booking'
+      });
+    }
+    
+    // Check if booking session is expired (20 minutes)
+    const createdAt = new Date(transaction.createdAt).getTime();
+    const expiry = createdAt + 20 * 60 * 1000;
+    const isExpired = Date.now() > expiry;
+    
+    if (isExpired) {
+      return res.status(422).json({
+        success: false,
+        message: 'Booking session has expired. Please try again.'
+      });
+    }
+    
+    const paymentAmount = transaction.pricing.total_chargeable_amount;
+    const companyId = req.user.type === 'company' ? req.user.id : transaction.companyId;
+    
+    // Process wallet payment
+    const walletResult = await walletService.processWalletPayment(companyId, paymentAmount, bookingId);
+    
+    if (!walletResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: walletResult.message
+      });
+    }
+    
+    // Update transaction with wallet payment response
+    transaction.payment_response = {
+      order_status: "Success",
+      payment_mode: "Wallet",
+      bank_ref_no: `WALLET_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      amount: paymentAmount,
+      currency: transaction.pricing.currency,
+      transaction_id: walletResult.data.transactionId || transactionId,
+      payment_method: "wallet",
+      wallet_transaction: walletResult.data
+    };
+    
+    transaction.status = 4; // payment success
+    await transaction.save();
+    
+    // Process the actual booking
+    try {
+      console.log('=== BOOKING API CALL START (WALLET) ===');
+      console.log('Booking ID:', bookingId);
+      console.log('Transaction ID:', transactionId);
+      
+      const bookingData = await Api.post("/book", {
+        "book": {
+          "booking_id": bookingId
+        }
+      });
+      
+      console.log('=== BOOKING API CALL SUCCESS (WALLET) ===');
+      
+      // Update transaction with booking response
+      transaction.book_response = bookingData;
+      transaction.status = 1; // confirmed
+      await transaction.save();
+      
+      // Send notifications
+      const { contactDetail, hotel, pricing } = transaction;
+      
+      const smsGuest = `Dear ${contactDetail.name}, Your Hotel ${hotel.originalName} has been booked and the bookingId is ${transaction._id}. Payment made via Wallet. Thank you!`;
+      
+      const locationInfo = hotel.location ? `${hotel.location.address || ''}, ${hotel.location.city || ''}, ${hotel.location.country || hotel.location?.countryCode || ''}` : 'Location not available';
+      const smsAdmin = `Hello Admin, new wallet booking received. bookingId: ${transaction._id}, Guest name: ${contactDetail.name} ${contactDetail.last_name}, Hotel name: ${hotel.originalName}, Amount: ${pricing.currency} ${pricing.total_chargeable_amount}, Payment mode: Wallet, Location: ${locationInfo}`;
+      
+      try {
+        const guestRes = Sms.send(contactDetail.mobile, smsGuest);
+        const adminRes = Sms.send("917678105666", smsAdmin);
+        
+        Promise.all([guestRes, adminRes])
+          .then((data) => {
+            console.log("SMS sent successfully for wallet payment");
+          })
+          .catch((err) => {
+            console.log("Failed to send SMS for wallet payment:", err);
+          });
+      } catch (err) {
+        console.log("Failed to send SMS for wallet payment:", err);
+      }
+      
+      // Generate and send email with invoice/voucher
+      try {
+        const invoiceBuffer = await invoice.generateInvoice(transaction);
+        const voucherBuffer = await voucher.generateVoucher(transaction);
+        
+        const msg = {
+          to: contactDetail.email,
+          subject: 'TripBazaar Confirmation - Wallet Payment',
+          text: `Dear ${contactDetail.name}, Your Hotel ${hotel.originalName} has been booked and the bookingId is ${transaction._id}. Payment made via Wallet. Thank you!`,
+          attachments: [{
+            filename: 'Invoice.pdf',
+            content: invoiceBuffer.toString('base64'),
+            type: 'application/pdf',
+            disposition: 'attachment'
+          }, {
+            filename: 'Voucher.pdf',
+            content: voucherBuffer.toString('base64'),
+            type: 'application/pdf',
+            disposition: 'attachment'
+          }],
+          html: `Dear ${contactDetail.name}, Your Hotel ${hotel.originalName} has been booked and the booking reference no. is ${transaction._id}. Payment made via Wallet. Thank you!`
+        };
+        
+        await Mail.send(msg);
+        console.log('Email sent successfully for wallet payment');
+      } catch (err) {
+        console.log('Failed to send email for wallet payment:', err);
+      }
+      
+      res.json({
+        success: true,
+        message: 'Payment processed successfully via wallet',
+        data: {
+          transactionId: transaction._id,
+          bookingId: bookingId,
+          amount: paymentAmount,
+          currency: transaction.pricing.currency,
+          paymentMethod: 'wallet',
+          status: 'confirmed',
+          walletTransaction: walletResult.data
+        }
+      });
+      
+    } catch (bookingError) {
+      console.error('=== BOOKING API CALL FAILED (WALLET) ===');
+      console.error('Error details:', bookingError);
+      
+      // Update transaction status to booking failed
+      transaction.status = 5; // booking failed
+      transaction.booking_error = {
+        message: bookingError.message,
+        response: bookingError.response?.data,
+        timestamp: new Date().toISOString()
+      };
+      await transaction.save();
+      
+      // Refund the wallet amount
+      try {
+        await walletService.addToWallet(companyId, paymentAmount, `Refund for failed booking - ${bookingId}`);
+        console.log('Wallet amount refunded for failed booking');
+      } catch (refundError) {
+        console.error('Failed to refund wallet amount:', refundError);
+      }
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Payment processed but booking failed. Amount will be refunded to your wallet.',
+        data: {
+          transactionId: transaction._id,
+          bookingId: bookingId,
+          amount: paymentAmount,
+          currency: transaction.pricing.currency,
+          paymentMethod: 'wallet',
+          status: 'booking_failed',
+          refundInitiated: true
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('=== WALLET PAYMENT PROCESS ERROR ===');
+    console.error('Error details:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to process wallet payment',
+      error: error.message
     });
   }
 };

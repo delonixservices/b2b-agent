@@ -144,8 +144,9 @@ exports.processPayment = async (req, res, next) => {
  * @returns {void} Redirects to success/failure page based on payment status
  */
 exports.paymentResponseHandler = async (req, res, next) => {
-  console.log('Payment response...');
-  console.log(req.body);
+  console.log('=== PAYMENT RESPONSE HANDLER START ===');
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
 
   const orderNo = req.body.orderNo;
   const encResp = req.body.encResp;
@@ -153,64 +154,175 @@ exports.paymentResponseHandler = async (req, res, next) => {
   const bookingFailedMsg = `Due to some technical problem the booking is not confirmed. The amount will be refunded if it is deducted from your account. Kindly book again.  Please write an email to support@delonixtravel.com incase of further queries.`;
 
   if (!orderNo) {
+    console.error('OrderNo missing from payment response');
     const error = new Error('OrderNo missing from payment_response from ccavanue.');
     error.statusCode = 500;
     return next(error);
   }
-  // console.log('Booking ID: ' + orderNo);
-  const dataObj = await Transaction.findById(orderNo);
-  // console.log(dataObj);
+  
+  console.log('OrderNo received:', orderNo);
+  
+  let dataObj;
+  try {
+    dataObj = await Transaction.findById(orderNo);
+    console.log('Transaction found:', dataObj ? 'Yes' : 'No');
+    if (dataObj) {
+      console.log('Transaction details:', {
+        id: dataObj._id,
+        status: dataObj.status,
+        hasPrebookResponse: !!dataObj.prebook_response,
+        hasBookingPolicy: !!dataObj.booking_policy,
+        createdAt: dataObj.created_at
+      });
+    }
+  } catch (err) {
+    console.error('Error finding transaction:', err);
+    const error = new Error('Database error while finding transaction');
+    error.statusCode = 500;
+    return next(error);
+  }
+  
   if (!dataObj) {
+    console.error('Transaction not found for OrderNo:', orderNo);
     const error = new Error('Sorry invalid OrderNo, cannot find any transaction with this order no');
     error.statusCode = 500;
     return next(error);
   }
 
-  const paymentData = ccavanue.decrypt(encResp, workingKey);
-  const queryStrings = url.parse("/?" + paymentData, true).query;
+  if (!dataObj.prebook_response || !dataObj.prebook_response.data || !dataObj.prebook_response.data.booking_id) {
+    console.error('Invalid prebook response in transaction:', {
+      hasPrebookResponse: !!dataObj.prebook_response,
+      prebookResponseData: dataObj.prebook_response,
+      bookingId: dataObj.prebook_response?.data?.booking_id
+    });
+    const error = new Error('Invalid prebook response data');
+    error.statusCode = 500;
+    return next(error);
+  }
+
+  let queryStrings;
+  try {
+    const paymentData = ccavanue.decrypt(encResp, workingKey);
+    queryStrings = url.parse("/?" + paymentData, true).query;
+    console.log('Payment response decrypted:', JSON.stringify(queryStrings, null, 2));
+  } catch (decryptErr) {
+    console.error('Error decrypting payment response:', decryptErr);
+    const error = new Error('Invalid payment response encryption');
+    error.statusCode = 500;
+    return next(error);
+  }
+  
   //storing payment response
   dataObj.payment_response = queryStrings;
 
+  console.log('Payment status:', queryStrings.order_status);
+  
   if (queryStrings.order_status === "Success") {
-    // redirect to success
-
+    console.log('=== PAYMENT SUCCESS - STARTING BOOKING PROCESS ===');
+    
+    // Update transaction status to payment success
     dataObj.status = 4; // payment success
-    await dataObj.save();
+    try {
+      await dataObj.save();
+      console.log('Transaction status updated to payment success');
+    } catch (saveErr) {
+      console.error('Failed to save payment success status:', saveErr);
+      // Continue with booking process even if save fails
+    }
 
     // doing the actual booking
     let data;
     try {
+      console.log('=== BOOKING API CALL START ===');
+      console.log('Booking ID:', dataObj.prebook_response.data.booking_id);
+      console.log('Transaction ID:', dataObj._id);
+      console.log('Payment Status:', queryStrings.order_status);
+      
       data = await Api.post("/book", {
         "book": {
           "booking_id": dataObj.prebook_response.data.booking_id
         }
       });
+      
+      console.log('=== BOOKING API CALL SUCCESS ===');
+      console.log('API Response:', JSON.stringify(data, null, 2));
+      
     } catch (err) {
-      logger.error(err);
-      logger.info(err);
-      logger.log(`log + ${err}`);
+      console.error('=== BOOKING API CALL FAILED ===');
+      console.error('Error details:', {
+        message: err.message,
+        stack: err.stack,
+        name: err.name,
+        code: err.code,
+        response: err.response ? {
+          status: err.response.status,
+          statusText: err.response.statusText,
+          data: err.response.data
+        } : null
+      });
+      
+      logger.error('Booking API Error:', err);
+      logger.info('Booking API Error Details:', {
+        bookingId: dataObj.prebook_response.data.booking_id,
+        transactionId: dataObj._id,
+        error: err.message,
+        response: err.response?.data
+      });
+      
+      // Update transaction status to booking failed
+      dataObj.status = 5; // booking failed
+      dataObj.booking_error = {
+        message: err.message,
+        response: err.response?.data,
+        timestamp: new Date().toISOString()
+      };
+      
+      try {
+        await dataObj.save();
+        console.log('Transaction status updated to booking failed');
+      } catch (saveErr) {
+        console.error('Failed to save transaction with error details:', saveErr);
+      }
+      
       const error = new Error(bookingFailedMsg);
       error.statusCode = 500;
-
-      dataObj.status = 5; // booking failed
-      dataObj.save();
-
       return next(error);
     }
 
     if (!data || !data.data) {
-      console.log(data);
+      console.error('=== INVALID BOOKING API RESPONSE ===');
+      console.error('API Response:', data);
+      console.error('Response structure:', Object.keys(data || {}));
+      
+      // Update transaction status to booking failed
+      dataObj.status = 5; // booking failed
+      dataObj.booking_error = {
+        message: 'Invalid API response - no data received',
+        response: data,
+        timestamp: new Date().toISOString()
+      };
+      
+      try {
+        await dataObj.save();
+      } catch (saveErr) {
+        console.error('Failed to save transaction with error details:', saveErr);
+      }
+      
       return res.status(500).send(bookingFailedMsg);
     }
 
+    console.log('=== BOOKING SUCCESS - UPDATING TRANSACTION ===');
     dataObj.status = 1; // booking_success
     dataObj.book_response = data;
 
-    // @TODO:- handle if data response is not saved in db
+    // Save the booking response
     try {
       await dataObj.save();
+      console.log('Transaction updated with booking success status');
     } catch (err) {
-      logger.log(`hotel book_response not saved.. Error ${err}`);
+      console.error('Failed to save booking response:', err);
+      logger.error(`hotel book_response not saved.. Error ${err}`);
+      // Continue with notifications even if save fails
     }
 
     const {
@@ -307,12 +419,24 @@ exports.paymentResponseHandler = async (req, res, next) => {
     }
     res.redirect(`${clientUrl}/hotels/hotelvoucher?id=${dataObj._id}`);
   } else {
-    // redirect to failed page
+    console.log('=== PAYMENT FAILED ===');
+    console.log('Payment status:', queryStrings.order_status);
+    console.log('Payment failure reason:', queryStrings.failure_message || 'Unknown');
+    
+    // Update transaction status to payment failed
     dataObj.status = 6; // payment failed 
-    dataObj.save();
+    try {
+      await dataObj.save();
+      console.log('Transaction status updated to payment failed');
+    } catch (saveErr) {
+      console.error('Failed to save payment failed status:', saveErr);
+    }
+    
     // res.redirect(`${clientUrl}/hotels/hoteldetails`);
     return res.status(500).send(bookingFailedMsg);
   }
+  
+  console.log('=== PAYMENT RESPONSE HANDLER COMPLETED ===');
 };
 
 /**

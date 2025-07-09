@@ -6,6 +6,8 @@ import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
 import { hotelApi, BookingPolicyResponse, PrebookRequest, ConfirmBookingRequest } from '../../services/hotelApi'
 import { isAuthenticated, clearAuthData, getAuthToken } from '../../utils/authUtils'
+import PaymentMethodSelector from '../../components/PaymentMethodSelector'
+import PaymentSuccess from '../../components/PaymentSuccess'
 
 interface ContactDetail {
   name: string;
@@ -38,6 +40,11 @@ export default function ReviewPage() {
   })
   const [guests, setGuests] = useState<Guest[]>([])
   const [userToken, setUserToken] = useState<string | null>(null)
+  const [prebookData, setPrebookData] = useState<any>(null)
+  const [paymentMethod, setPaymentMethod] = useState<'wallet' | 'gateway' | null>(null)
+  const [paymentLoading, setPaymentLoading] = useState(false)
+  const [showPaymentSelector, setShowPaymentSelector] = useState(false)
+  const [paymentSuccess, setPaymentSuccess] = useState(false)
 
   // Utility function to handle authentication errors
   const handleAuthError = () => {
@@ -251,16 +258,10 @@ export default function ReviewPage() {
       const prebookResponse = await hotelApi.prebookHotel(prebookData, token!)
       
       console.log('Prebook response:', prebookResponse)
+      setPrebookData(prebookResponse)
 
-      // After prebook, redirect to process-payment if booking_id is present
-      const bookingId = prebookResponse.data?.booking_id || prebookResponse.data?.prebook_id || prebookResponse.data?.id || prebookResponse.data?.transactionid;
-      if (bookingId) {
-        window.location.href = `http://localhost:3334/api/hotels/process-payment/${bookingId}`;
-        return;
-      } else {
-        setError('Booking ID not found for payment processing');
-        return;
-      }
+      // Show payment method selector instead of redirecting
+      setShowPaymentSelector(true)
 
     } catch (err: any) {
       console.error('Error during booking process:', err)
@@ -287,6 +288,65 @@ export default function ReviewPage() {
     router.back()
   }
 
+  const handlePaymentMethodSelect = (method: 'wallet' | 'gateway') => {
+    setPaymentMethod(method)
+  }
+
+  const handleWalletPayment = async () => {
+    try {
+      setPaymentLoading(true)
+      setError(null)
+
+      if (!prebookData || !paymentMethod) {
+        setError('Payment data not available')
+        return
+      }
+
+      const token = getAuthToken()
+      const bookingId = prebookData.data?.booking_id || prebookData.data?.prebook_id || prebookData.data?.id || prebookData.data?.transactionid
+      const transactionId = prebookData.data?.transactionid || prebookData.data?.id
+
+      if (!bookingId || !transactionId) {
+        setError('Booking information not available')
+        return
+      }
+
+      const response = await hotelApi.processWalletPayment(token!, {
+        transactionId,
+        bookingId
+      })
+
+      console.log('Wallet payment response:', response)
+
+      if (response.success) {
+        // Show success component
+        setPaymentSuccess(true)
+      } else {
+        setError(response.message || 'Payment failed')
+      }
+
+    } catch (err: any) {
+      console.error('Error processing wallet payment:', err)
+      setError(err.message || 'Failed to process wallet payment')
+    } finally {
+      setPaymentLoading(false)
+    }
+  }
+
+  const handleGatewayPayment = () => {
+    if (!prebookData) {
+      setError('Payment data not available')
+      return
+    }
+
+    const bookingId = prebookData.data?.booking_id || prebookData.data?.prebook_id || prebookData.data?.id || prebookData.data?.transactionid
+    if (bookingId) {
+      window.location.href = `http://localhost:3334/api/hotels/process-payment/${bookingId}`
+    } else {
+      setError('Booking ID not found for payment processing')
+    }
+  }
+
   useEffect(() => {
     // Check if user is authenticated
     if (isAuthenticated()) {
@@ -299,6 +359,24 @@ export default function ReviewPage() {
       handleAuthError()
     }
   }, [])
+
+  if (paymentSuccess) {
+    return (
+      <div className="min-h-screen">
+        <Navbar />
+        <PaymentSuccess
+          bookingId={prebookData?.data?.booking_id || prebookData?.data?.id || ''}
+          amount={totalPrice}
+          currency="INR"
+          paymentMethod={paymentMethod || 'wallet'}
+          hotelName={hotelName || ''}
+          checkIn={checkIn || ''}
+          checkOut={checkOut || ''}
+        />
+        <Footer />
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -577,13 +655,27 @@ export default function ReviewPage() {
                 </div>
               </div>
 
-              <button
-                onClick={handlePrebook}
-                disabled={loading}
-                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {loading ? 'Processing...' : 'Confirm Booking'}
-              </button>
+              {!showPaymentSelector ? (
+                <button
+                  onClick={handlePrebook}
+                  disabled={loading}
+                  className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {loading ? 'Processing...' : 'Confirm Booking'}
+                </button>
+              ) : (
+                <PaymentMethodSelector
+                  amount={totalPrice}
+                  currency="INR"
+                  onPaymentMethodSelect={handlePaymentMethodSelect}
+                  selectedMethod={paymentMethod}
+                  transactionId={prebookData?.data?.transactionid || prebookData?.data?.id || ''}
+                  bookingId={prebookData?.data?.booking_id || prebookData?.data?.prebook_id || prebookData?.data?.id || ''}
+                  onWalletPayment={handleWalletPayment}
+                  onGatewayPayment={handleGatewayPayment}
+                  loading={paymentLoading}
+                />
+              )}
 
               <p className="text-xs text-gray-500 mt-3 text-center">
                 By clicking "Confirm Booking", you agree to our terms and conditions.

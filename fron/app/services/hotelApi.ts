@@ -281,7 +281,7 @@ export const processWalletPayment = async (
     bookingId: string;
   }
 ): Promise<WalletPaymentResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/hotels/wallet/payment`, {
+  const response = await fetch(`${API_BASE_URL}/api/hotels/process-wallet-payment`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,

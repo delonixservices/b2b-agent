@@ -16,6 +16,7 @@ router.get('/transaction-identifier', isAuth, isCompanyOrEmployee, isActive, hot
 // Payment routes
 router.get('/process-payment/:id', paymentController.processPayment);
 router.post('/payment-response-handler', paymentController.paymentResponseHandler);
+router.post('/process-wallet-payment', isAuth, isCompanyOrEmployee, isActive, hotelController.processWalletPayment);
 router.post('/confirm-booking', isAuth, isCompanyOrEmployee, isActive, paymentController.confirmBooking);
 
 // Wallet payment routes
