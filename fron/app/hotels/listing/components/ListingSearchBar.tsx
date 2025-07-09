@@ -147,7 +147,8 @@ export default function ListingSearchBar() {
     setSelectedArea({
       id: suggestion.id,
       type: suggestion.id.includes('city') ? 'city' : suggestion.id.includes('hotel') ? 'hotel' : 'poi',
-      name: suggestion.name
+      name: suggestion.name,
+      transaction_identifier: suggestion.transaction_identifier
     })
     setSearchTerm('')
     setShowSuggestions(false)

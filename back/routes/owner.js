@@ -6,35 +6,46 @@ const {
   verifyCompany,
   getDashboardStats,
   createSuperAdmin,
-  createMarkup,
-  getAllMarkups,
-  getMarkupById,
-  updateMarkup,
-  deleteMarkup,
-  calculateMarkup
+  createConfig,
+  getConfig,
+  getMarkup,
+  updateConfig,
+  deleteConfig,
+  calculateMarkup,
+  updateCompanyWallet,
+  getCompanyWallet,
+  getAllCompaniesWithWallets
 } = require('../controllers/ownerController');
 const { isAuth, isAdmin } = require('../middleware/isauth');
+const isSuperAdmin = require('../middleware/isadmin');
 const { getEmployeesByCompanyId } = require('../controllers/employeeController');
 
 const router = express.Router();
 
 // Public routes
 router.post('/login', ownerLogin);
-router.post('/setup-super-admin', createSuperAdmin); // One-time setup route
+router.post('/setup-super-admin', createSuperAdmin);
 
-// Protected routes (admin only)
+// Protected routes
 router.get('/dashboard/stats', isAuth, isAdmin, getDashboardStats);
 router.get('/companies', isAuth, isAdmin, getAllCompanies);
+router.get('/companies/wallets', isAuth, isAdmin, getAllCompaniesWithWallets);
 router.get('/companies/:companyId', isAuth, isAdmin, getCompanyById);
-router.get('/companies/:companyId/employees', isAuth, isAdmin, getEmployeesByCompanyId);
 router.put('/companies/:companyId/verify', isAuth, isAdmin, verifyCompany);
 
-// Markup routes
-router.post('/markups', isAuth, isAdmin, createMarkup);
-router.get('/markups', isAuth, isAdmin, getAllMarkups);
-router.get('/markups/:markupId', isAuth, isAdmin, getMarkupById);
-router.put('/markups/:markupId', isAuth, isAdmin, updateMarkup);
-router.delete('/markups/:markupId', isAuth, isAdmin, deleteMarkup);
-router.post('/markups/calculate', isAuth, isAdmin, calculateMarkup);
+// Wallet management routes
+router.get('/companies/:companyId/wallet', isAuth, isAdmin, getCompanyWallet);
+router.put('/companies/:companyId/wallet', isAuth, isAdmin, updateCompanyWallet);
+
+// Configuration routes
+router.post('/config', isAuth, isSuperAdmin, createConfig);
+router.get('/config', isAuth, isAdmin, getConfig);
+router.put('/config', isAuth, isSuperAdmin, updateConfig);
+router.delete('/config', isAuth, isSuperAdmin, deleteConfig);
+router.post('/config/calculate', isAuth, isAdmin, calculateMarkup);
+router.get('/config/markup', isAuth, isAdmin, getMarkup);
+
+// Employee routes
+router.get('/companies/:companyId/employees', isAuth, isAdmin, getEmployeesByCompanyId);
 
 module.exports = router;

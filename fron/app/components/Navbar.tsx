@@ -3,11 +3,14 @@
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { Menu, X, Wallet } from 'lucide-react'
+import { getWalletBalance } from '../services/hotelApi'
+import { getToken } from '../utils/authUtils'
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [walletBalance, setWalletBalance] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -30,8 +33,27 @@ export default function Navbar() {
       } else {
         setLogoUrl(null);
       }
+      // Fetch wallet balance if logged in
+      if (localStorage.getItem('token')) {
+        fetchWallet();
+      }
     }
   }, [])
+
+  const fetchWallet = async () => {
+    try {
+      const token = getToken();
+      if (!token) return;
+      const response = await getWalletBalance(token);
+      if (response && response.data && response.data.wallet) {
+        setWalletBalance(
+          new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(response.data.wallet.balance)
+        );
+      }
+    } catch (error) {
+      setWalletBalance(null);
+    }
+  }
 
   return (
     <nav className="bg-white shadow-lg fixed w-full z-50">
@@ -58,8 +80,11 @@ export default function Navbar() {
               <Link href="/dashboard" className="text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium">
                 Dashboard
               </Link>
-              <Link href="/dashboard/wallet" className="flex items-center text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium">
+              <Link href="/wallet" className="flex items-center text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium">
                 <Wallet className="mr-1 h-5 w-5" /> Wallet
+                {walletBalance && (
+                  <span className="ml-2 text-base font-semibold text-black">{walletBalance}</span>
+                )}
               </Link>
             </div>
           ) : (
@@ -103,7 +128,7 @@ export default function Navbar() {
                 <Link href="/dashboard" className="text-gray-700 hover:text-blue-600 block px-3 py-2 rounded-md text-base font-medium">
                   Dashboard
                 </Link>
-                <Link href="/dashboard/wallet" className="flex items-center text-gray-700 hover:text-blue-600 block px-3 py-2 rounded-md text-base font-medium">
+                <Link href="/wallet" className="flex items-center text-gray-700 hover:text-blue-600 block px-3 py-2 rounded-md text-base font-medium">
                   <Wallet className="mr-1 h-5 w-5" /> Wallet
                 </Link>
               </>

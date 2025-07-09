@@ -19,6 +19,7 @@ export interface Company {
   status: 'pending' | 'verified' | 'deactivated';
   createdAt: string;
   updatedAt: string;
+  companyNumber?: number;
 }
 
 export interface DashboardStats {
@@ -29,36 +30,41 @@ export interface DashboardStats {
   totalEmployees: number;
 }
 
-export interface Markup {
+export interface Config {
   _id: string;
-  name: string;
-  description?: string;
-  type: 'fixed' | 'percentage';
-  value: number;
-  isActive: boolean;
-  createdBy: {
-    _id: string;
-    name: string;
-    username: string;
+  markup: {
+    type: 'fixed' | 'percentage';
+    value: number;
   };
-  createdAt: string;
-  updatedAt: string;
+  service_charge: {
+    type: 'fixed' | 'percentage';
+    value: number;
+  };
+  processing_fee: number;
+  cancellation_charge: {
+    type: 'fixed' | 'percentage';
+    value: number;
+  };
+  created_at: string;
+  updated_at: string;
 }
 
-export interface MarkupResponse {
+export interface ConfigResponse {
   success: boolean;
   message: string;
   data: {
-    markup: Markup;
+    config: Config;
   };
 }
 
-export interface MarkupsResponse {
+export interface MarkupConfigResponse {
   success: boolean;
   message: string;
   data: {
-    markup: Markup | null;
-    exists: boolean;
+    markup: {
+      type: 'fixed' | 'percentage';
+      value: number;
+    };
   };
 }
 
@@ -68,8 +74,6 @@ export interface MarkupCalculationResponse {
   data: {
     originalAmount: number;
     markup: {
-      id: string;
-      name: string;
       type: 'fixed' | 'percentage';
       value: number;
       amount: number;
@@ -250,11 +254,11 @@ export const logoutAdmin = (): void => {
   localStorage.removeItem('adminInfo');
 };
 
-// Markup API Functions
+// Configuration API Functions
 
-// Get Global Markup
-export const getAllMarkups = async (token: string): Promise<MarkupsResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups`, {
+// Get Configuration
+export const getConfig = async (token: string): Promise<ConfigResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -262,15 +266,15 @@ export const getAllMarkups = async (token: string): Promise<MarkupsResponse> => 
   });
 
   if (!response.ok) {
-    throw new Error('Failed to fetch markup');
+    throw new Error('Failed to fetch configuration');
   }
 
   return response.json();
 };
 
-// Get Markup by ID
-export const getMarkupById = async (token: string, markupId: string): Promise<MarkupResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+// Get Markup Configuration
+export const getMarkupConfig = async (token: string): Promise<MarkupConfigResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config/markup`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -278,69 +282,85 @@ export const getMarkupById = async (token: string, markupId: string): Promise<Ma
   });
 
   if (!response.ok) {
-    throw new Error('Failed to fetch markup details');
+    throw new Error('Failed to fetch markup configuration');
   }
 
   return response.json();
 };
 
-// Create Markup
-export const createMarkup = async (
+// Create/Update Configuration
+export const createConfig = async (
   token: string,
-  markupData: {
-    name: string;
-    description?: string;
-    type: 'fixed' | 'percentage';
-    value: number;
+  configData: {
+    markup: {
+      type: 'fixed' | 'percentage';
+      value: number;
+    };
+    service_charge: {
+      type: 'fixed' | 'percentage';
+      value: number;
+    };
+    processing_fee: number;
+    cancellation_charge: {
+      type: 'fixed' | 'percentage';
+      value: number;
+    };
   }
-): Promise<MarkupResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups`, {
+): Promise<ConfigResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(markupData),
+    body: JSON.stringify(configData),
   });
 
   if (!response.ok) {
-    throw new Error('Failed to create markup');
+    throw new Error('Failed to create/update configuration');
   }
 
   return response.json();
 };
 
-// Update Markup
-export const updateMarkup = async (
+// Update Configuration (Partial)
+export const updateConfig = async (
   token: string,
-  markupId: string,
-  markupData: {
-    name?: string;
-    description?: string;
-    type?: 'fixed' | 'percentage';
-    value?: number;
-    isActive?: boolean;
+  configData: {
+    markup?: {
+      type?: 'fixed' | 'percentage';
+      value?: number;
+    };
+    service_charge?: {
+      type?: 'fixed' | 'percentage';
+      value?: number;
+    };
+    processing_fee?: number;
+    cancellation_charge?: {
+      type?: 'fixed' | 'percentage';
+      value?: number;
+    };
   }
-): Promise<MarkupResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+): Promise<ConfigResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(markupData),
+    body: JSON.stringify(configData),
   });
 
   if (!response.ok) {
-    throw new Error('Failed to update markup');
+    throw new Error('Failed to update configuration');
   }
 
   return response.json();
 };
 
-// Delete Markup
-export const deleteMarkup = async (token: string, markupId: string): Promise<{ success: boolean; message: string }> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+// Delete Configuration (Not allowed)
+export const deleteConfig = async (token: string): Promise<{ success: boolean; message: string }> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -349,7 +369,7 @@ export const deleteMarkup = async (token: string, markupId: string): Promise<{ s
   });
 
   if (!response.ok) {
-    throw new Error('Failed to delete markup');
+    throw new Error('Failed to delete configuration');
   }
 
   return response.json();
@@ -360,7 +380,7 @@ export const calculateMarkup = async (
   token: string,
   amount: number
 ): Promise<MarkupCalculationResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/owner/markups/calculate`, {
+  const response = await fetch(`${API_BASE_URL}/api/owner/config/calculate`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -387,4 +407,129 @@ export const refreshDashboardData = async (token: string) => {
   } catch (error) {
     throw new Error('Failed to refresh dashboard data');
   }
-}; 
+};
+
+// Wallet Management APIs
+
+// Get All Companies with Wallet Balances
+export const getAllCompaniesWithWallets = async (
+  token: string,
+  status?: 'pending' | 'verified' | 'deactivated',
+  page?: number,
+  limit?: number
+): Promise<CompaniesWithWalletsResponse> => {
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+  if (page) params.append('page', page.toString());
+  if (limit) params.append('limit', limit.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/owner/companies/wallets?${params}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch companies with wallets');
+  }
+
+  return response.json();
+};
+
+// Get Company Wallet Balance
+export const getCompanyWallet = async (
+  token: string,
+  companyId: string
+): Promise<CompanyWalletResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/companies/${companyId}/wallet`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch company wallet');
+  }
+
+  return response.json();
+};
+
+// Update Company Wallet Balance
+export const updateCompanyWallet = async (
+  token: string,
+  companyId: string,
+  walletData: {
+    amount: number;
+    action: 'add' | 'deduct';
+    reason?: string;
+  }
+): Promise<UpdateWalletResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/companies/${companyId}/wallet`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(walletData),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to update company wallet');
+  }
+
+  return response.json();
+};
+
+// Type Definitions for Wallet APIs
+
+export interface CompanyWallet {
+  balance: number;
+  currency: string;
+  lastUpdated: string;
+}
+
+export interface CompanyWithWallet extends Company {
+  wallet: CompanyWallet;
+}
+
+export interface CompaniesWithWalletsResponse {
+  success: boolean;
+  message: string;
+  data: {
+    companies: CompanyWithWallet[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      pages: number;
+    };
+  };
+}
+
+export interface CompanyWalletResponse {
+  success: boolean;
+  message: string;
+  data: {
+    companyId: string;
+    companyName: string;
+    wallet: CompanyWallet;
+  };
+}
+
+export interface UpdateWalletResponse {
+  success: boolean;
+  message: string;
+  data: {
+    companyId: string;
+    companyName: string;
+    oldBalance: number;
+    newBalance: number;
+    amount: number;
+    action: 'add' | 'deduct';
+    reason: string;
+    currency: string;
+    lastUpdated: string;
+  };
+} 

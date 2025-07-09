@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { User, Building, Users, Hotel } from 'lucide-react'
+import { User, Building, Users, Hotel, Wallet } from 'lucide-react'
+import { getWalletBalance } from '../services/hotelApi'
+import { getToken } from '../utils/authUtils'
 
 interface UserData {
   id: string
@@ -12,9 +14,17 @@ interface UserData {
   numPeople: number
 }
 
+interface WalletData {
+  balance: number
+  currency: string
+  lastUpdated: string
+}
+
 export default function DashboardPage() {
   const router = useRouter()
   const [user, setUser] = useState<UserData | null>(null)
+  const [walletData, setWalletData] = useState<WalletData | null>(null)
+  const [loadingWallet, setLoadingWallet] = useState(true)
 
   useEffect(() => {
     // Check if user is logged in
@@ -28,11 +38,34 @@ export default function DashboardPage() {
 
     try {
       setUser(JSON.parse(userData))
+      fetchWalletBalance()
     } catch (error) {
       console.error('Error parsing user data:', error)
       router.push('/login')
     }
   }, [router])
+
+  const fetchWalletBalance = async () => {
+    try {
+      setLoadingWallet(true)
+      const token = getToken()
+      if (!token) return
+
+      const response = await getWalletBalance(token)
+      setWalletData(response.data.wallet)
+    } catch (error) {
+      console.error('Error fetching wallet balance:', error)
+    } finally {
+      setLoadingWallet(false)
+    }
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR'
+    }).format(amount)
+  }
 
   if (!user) {
     return (

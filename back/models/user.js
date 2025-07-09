@@ -28,6 +28,12 @@ const companySchema = new mongoose.Schema({
     type: { type: String, enum: ['percentage', 'fixed'], default: 'percentage' },
     value: { type: Number, default: 0, min: 0 },
     isActive: { type: Boolean, default: true }
+  },
+  // Wallet configuration
+  wallet: {
+    balance: { type: Number, default: 0, min: 0 }, // Current wallet balance
+    currency: { type: String, default: 'INR' }, // Currency for wallet
+    lastUpdated: { type: Date, default: Date.now } // Last wallet update timestamp
   }
 }, {
   timestamps: true

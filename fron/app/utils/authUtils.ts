@@ -5,6 +5,11 @@ export const getAuthToken = (): string | null => {
   return localStorage.getItem('token');
 };
 
+// Alias for getAuthToken for compatibility
+export const getToken = (): string | null => {
+  return getAuthToken();
+};
+
 export const isAuthenticated = (): boolean => {
   return !!getAuthToken();
 };
@@ -25,6 +30,38 @@ export const getUserData = (): any | null => {
   if (typeof window === 'undefined') return null;
   const userData = localStorage.getItem('user');
   return userData ? JSON.parse(userData) : null;
+};
+
+// Admin authentication functions
+export const getAdminToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('adminToken');
+};
+
+export const isAdminAuthenticated = (): boolean => {
+  return !!getAdminToken();
+};
+
+export const clearAdminAuthData = (): void => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('adminToken');
+  localStorage.removeItem('admin');
+};
+
+export const setAdminAuthData = (token: string, admin: any): void => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('adminToken', token);
+  localStorage.setItem('admin', JSON.stringify(admin));
+};
+
+export const getAdminData = (): any | null => {
+  if (typeof window === 'undefined') return null;
+  const adminData = localStorage.getItem('admin');
+  return adminData ? JSON.parse(adminData) : null;
+};
+
+export const logoutAdmin = (): void => {
+  clearAdminAuthData();
 };
 
 // API headers with authentication

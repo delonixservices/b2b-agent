@@ -150,7 +150,8 @@ export default function HotelDetailsPage() {
     if (hotel.imageDetails?.images && hotel.imageDetails.images.length > 0) {
       return hotel.imageDetails.images[0]
     }
-    return 'https://via.placeholder.com/600x400?text=Hotel+Image'
+    // Use the requested placeholder image if no image is available
+    return 'https://www.hoteldel.com/wp-content/uploads/2021/01/hotel-del-coronado-views-suite-K1TOS1-K1TOJ1-1600x900-1.jpg'
   }
 
   const getHotelAddress = (hotel: HotelDetails) => {
@@ -190,6 +191,7 @@ export default function HotelDetailsPage() {
       const checkOut = searchParams.get('checkOut')
       const details = searchParams.get('details')
       const viewMode = searchParams.get('viewMode')
+      const transactionIdentifier = searchParams.get('transaction_identifier')
 
       if (!hotelId) {
         throw new Error('Hotel ID is required')
@@ -217,10 +219,12 @@ export default function HotelDetailsPage() {
         hotelId,
         checkindate: checkIn,
         checkoutdate: checkOut,
-        details: JSON.parse(details)
+        details: JSON.parse(details),
+        transaction_identifier: transactionIdentifier || undefined
       }
 
       console.log('Search packages payload:', searchPayload)
+      console.log('Transaction identifier from URL:', transactionIdentifier)
       console.log('Using authentication token:', token ? 'Token present' : 'No token')
 
       const data: SearchResponse = await hotelApi.searchPackages(searchPayload, token!)
@@ -398,30 +402,11 @@ export default function HotelDetailsPage() {
               <p className="text-gray-600 mb-4">
                 {getHotelAddress(hotel)}
               </p>
-              
-              {hotel.amenities && hotel.amenities.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-3">Amenities</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {hotel.amenities.slice(0, 8).map((amenity, index) => (
-                      <span key={index} className="bg-gray-100 text-gray-700 text-sm px-3 py-1 rounded-full">
-                        {amenity}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Reviews Section */}
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-lg font-semibold text-gray-800">Guest Reviews</h3>
-                  <button
-                    onClick={() => router.push(`/hotels/review?hotelId=${hotel.hotelId || hotel.id}&hotelName=${encodeURIComponent(hotel.name)}`)}
-                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                  >
-                    View All Reviews →
-                  </button>
                 </div>
                 <div className="flex items-center mb-2">
                   {renderStars(hotel.starRating || 0)}
@@ -451,7 +436,6 @@ export default function HotelDetailsPage() {
         {hotel.rates.packages.length > 0 && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Available Room Packages</h2>
-            
             <div className="space-y-4">
               {hotel.rates.packages.map((pkg, index) => (
                 <div 
@@ -464,38 +448,72 @@ export default function HotelDetailsPage() {
                   onClick={() => handleBookPackage(pkg)}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-                    <div className="lg:w-2/3">
-                      <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                        {getPackageName(pkg)}
-                      </h3>
-                      
-                      <div className="space-y-2 text-sm text-gray-600">
-                        <p><span className="font-medium">Meal Plan:</span> {getMealPlan(pkg)}</p>
-                        <p>
-                          <span className="font-medium">Cancellation:</span> 
-                          {pkg.room_details?.non_refundable ? ' Non-refundable' : ' Refundable'}
-                        </p>
-                        {pkg.cancellation_policy && (
-                          <p><span className="font-medium">Policy:</span> {pkg.cancellation_policy}</p>
-                        )}
-                      </div>
+                    {/* Package Image on the left, small */}
+                    <div className="mb-4 lg:mb-0 lg:mr-6 flex-shrink-0">
+                      <img
+                        src={pkg.image || 'https://www.hoteldel.com/wp-content/uploads/2021/01/hotel-del-coronado-views-suite-K1TOS1-K1TOJ1-1600x900-1.jpg'}
+                        alt={getPackageName(pkg)}
+                        className="w-28 h-20 object-cover rounded shadow"
+                      />
                     </div>
-                    
-                    <div className="lg:w-1/3 text-right mt-4 lg:mt-0">
-                      <div className="text-3xl font-bold text-blue-600 mb-2">
-                        {formatPrice(getPackagePrice(pkg))}
-                      </div>
-                      <div className="text-sm text-gray-500 mb-3">per night</div>
-                      
-                      {(pkg.markup_amount || 0) > 0 && (
-                        <div className="text-xs text-gray-500 mb-3">
-                          +{formatPrice(pkg.markup_amount || 0)} markup applied
+                    <div className="flex-1 flex flex-col lg:flex-row lg:items-center lg:justify-between w-full">
+                      <div className="lg:w-2/3">
+                        <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                          {getPackageName(pkg)}
+                        </h3>
+                        <div className="space-y-2 text-sm text-gray-600">
+                          <p><span className="font-medium">Meal Plan:</span> {getMealPlan(pkg)}</p>
+                          <p>
+                            <span className="font-medium">Cancellation:</span> 
+                            {pkg.room_details?.non_refundable ? ' Non-refundable' : ' Refundable'}
+                          </p>
+                          {pkg.cancellation_policy && (
+                            <p><span className="font-medium">Policy:</span> {pkg.cancellation_policy}</p>
+                          )}
                         </div>
-                      )}
+                      </div>
+                      <div className="lg:w-1/3 text-right mt-4 lg:mt-0 flex flex-col items-end">
+                        <div className="text-3xl font-bold text-blue-600 mb-2">
+                          {formatPrice(getPackagePrice(pkg))}
+                        </div>
+                        <div className="text-sm text-gray-500 mb-3">per night</div>
+                        {(pkg.markup_amount || 0) > 0 && (
+                          <div className="text-xs text-gray-500 mb-3">
+                            +{formatPrice(pkg.markup_amount || 0)} markup applied
+                          </div>
+                        )}
+                        <button 
+                          className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition mt-2"
+                          onClick={() => handleBookPackage(pkg)}
+                        >
+                          Book Now
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+        {/* Map Section: separate, outside the package card */}
+        {hotel.location?.latLng?.lat && hotel.location?.latLng?.lng && (
+          <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+            <h3 className="text-xl font-bold text-black mb-2">Location</h3>
+            <div className="bg-gray-200 rounded-t px-4 py-2 text-lg font-semibold text-gray-700">
+              {hotel.location.address || getHotelAddress(hotel)}
+            </div>
+            <div className="w-full h-64 rounded-b overflow-hidden">
+              <iframe
+                title="Hotel Location Map"
+                width="100%"
+                height="100%"
+                style={{ border: 0 }}
+                loading="lazy"
+                allowFullScreen
+                referrerPolicy="no-referrer-when-downgrade"
+                src={`https://www.google.com/maps?q=${hotel.location.latLng.lat},${hotel.location.latLng.lng}&hl=en&z=16&output=embed`}
+              ></iframe>
             </div>
           </div>
         )}

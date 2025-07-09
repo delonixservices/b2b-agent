@@ -26,6 +26,11 @@ const markupSchema = new mongoose.Schema({
     type: Boolean, 
     default: true 
   },
+  hotelId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Hotel',
+    required: true
+  },
   createdBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Admin', 
@@ -36,10 +41,10 @@ const markupSchema = new mongoose.Schema({
 });
 
 // Index for efficient queries
-markupSchema.index({ isActive: 1 });
+markupSchema.index({ isActive: 1, hotelId: 1 });
 
-// Ensure only one global markup exists
-markupSchema.index({}, { unique: true, sparse: true });
+// Ensure only one markup per hotel
+markupSchema.index({ hotelId: 1 }, { unique: true });
 
 const Markup = mongoose.model('Markup', markupSchema);
 

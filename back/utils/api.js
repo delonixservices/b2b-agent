@@ -72,6 +72,23 @@ class ApiService {
       console.log('Response data keys:', Object.keys(response.data || {}));
       console.log('=== API POST REQUEST END ===');
       
+      // Check for error codes in the response data
+      if (response.data && (response.data.errorCode || response.data.errorMsg)) {
+        console.error('=== API ERROR RESPONSE DETECTED ===');
+        console.error('Error Code:', response.data.errorCode);
+        console.error('Error Message:', response.data.errorMsg);
+        console.error('Full Error Response:', JSON.stringify(response.data, null, 2));
+        
+        const errorMessage = response.data.errorMsg || `API Error: ${response.data.errorCode || 'Unknown error'}`;
+        const apiError = new Error(errorMessage);
+        apiError.name = 'APIError';
+        apiError.errorCode = response.data.errorCode;
+        apiError.errorMsg = response.data.errorMsg;
+        apiError.status = response.status;
+        apiError.responseData = response.data;
+        throw apiError;
+      }
+      
       return response.data;
     } catch (error) {
       console.error('=== API POST REQUEST ERROR ===');

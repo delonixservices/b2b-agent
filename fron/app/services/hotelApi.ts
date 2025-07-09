@@ -104,6 +104,7 @@ export interface SearchRequest {
     id: string;
     type: string;
     name: string;
+    transaction_identifier?: string;
   };
   checkindate: string;
   checkoutdate: string;
@@ -230,6 +231,126 @@ export interface ConfirmBookingResponse {
   status: 'confirmed' | 'paid' | 'payment_pending';
 }
 
+// Wallet Payment APIs
+
+// Get Wallet Balance
+export const getWalletBalance = async (token: string): Promise<WalletBalanceResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/hotels/wallet/balance`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch wallet balance');
+  }
+
+  return response.json();
+};
+
+// Check Wallet Payment Eligibility
+export const checkWalletPaymentEligibility = async (
+  token: string,
+  data: {
+    transactionId: string;
+    bookingId: string;
+  }
+): Promise<WalletEligibilityResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/hotels/wallet/check-eligibility`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to check wallet payment eligibility');
+  }
+
+  return response.json();
+};
+
+// Process Wallet Payment
+export const processWalletPayment = async (
+  token: string,
+  data: {
+    transactionId: string;
+    bookingId: string;
+  }
+): Promise<WalletPaymentResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/hotels/wallet/payment`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to process wallet payment');
+  }
+
+  return response.json();
+};
+
+// Type Definitions for Wallet APIs
+
+export interface WalletBalance {
+  balance: number;
+  currency: string;
+  lastUpdated: string;
+}
+
+export interface WalletBalanceResponse {
+  success: boolean;
+  message: string;
+  data: {
+    companyId: string;
+    companyName: string;
+    wallet: WalletBalance;
+  };
+}
+
+export interface WalletEligibilityResponse {
+  success: boolean;
+  message: string;
+  data: {
+    eligible: boolean;
+    requiredAmount: number;
+    currentBalance: number;
+    currency: string;
+    insufficientAmount: number;
+  };
+}
+
+export interface WalletTransaction {
+  companyId: string;
+  companyName: string;
+  oldBalance: number;
+  newBalance: number;
+  amount: number;
+  reason: string;
+  currency: string;
+  lastUpdated: string;
+}
+
+export interface WalletPaymentResponse {
+  success: boolean;
+  message: string;
+  data: {
+    bookingId: string;
+    status: string;
+    paymentMethod: string;
+    amount: number;
+    walletTransaction: WalletTransaction;
+    voucherUrl: string;
+  };
+}
+
 // Hotel API functions
 export const hotelApi = {
   // Search hotels
@@ -242,7 +363,7 @@ export const hotelApi = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/hotels/search`, {
+    const response = await fetch(`${API_BASE_URL}/api/hotels/searchHotels`, {
       method: 'POST',
       headers,
       body: JSON.stringify(searchData),
@@ -252,7 +373,14 @@ export const hotelApi = {
       if (response.status === 401) {
         throw new Error('401: Authentication required');
       }
-      throw new Error(`Failed to search hotels: ${response.status}`);
+      
+      // Try to get error message from response
+      try {
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || `Failed to search hotels: ${response.status}`);
+      } catch (parseError) {
+        throw new Error(`Failed to search hotels: ${response.status}`);
+      }
     }
 
     return response.json();

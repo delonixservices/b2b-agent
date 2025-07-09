@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation'
 
 interface HotelCardProps {
   hotel: Hotel
+  transactionIdentifier?: string
 }
 
-export default function HotelCard({ hotel }: HotelCardProps) {
+export default function HotelCard({ hotel, transactionIdentifier }: HotelCardProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -43,7 +44,8 @@ export default function HotelCard({ hotel }: HotelCardProps) {
     if (hotel.imageDetails?.images && hotel.imageDetails.images.length > 0) {
       return hotel.imageDetails.images[0]
     }
-    return 'https://via.placeholder.com/300x200?text=Hotel+Image'
+    // Use the provided placeholder image if no image is available
+    return 'https://www.hoteldel.com/wp-content/uploads/2021/01/hotel-del-coronado-views-suite-K1TOS1-K1TOJ1-1600x900-1.jpg'
   }
 
   const getHotelAddress = (hotel: Hotel) => {
@@ -94,6 +96,14 @@ export default function HotelCard({ hotel }: HotelCardProps) {
       details: JSON.stringify(details),
       area: area || ''
     })
+
+    // Add transaction_identifier if available
+    if (transactionIdentifier) {
+      params.append('transaction_identifier', transactionIdentifier)
+      console.log('Adding transaction_identifier to URL:', transactionIdentifier)
+    } else {
+      console.log('No transaction_identifier available')
+    }
 
     router.push(`/hotels/details?${params.toString()}`)
   }
@@ -148,10 +158,24 @@ export default function HotelCard({ hotel }: HotelCardProps) {
             
             {/* Price */}
             <div className="text-right">
-              <div className="text-2xl font-bold text-blue-600">
-                {formatPrice(getMinPrice(hotel))}
-              </div>
-              <div className="text-sm text-gray-500">per night</div>
+              {/* Main Price: chargeable_rate of the first package */}
+              {hotel.rates.packages && hotel.rates.packages.length > 0 ? (
+                <>
+                  <div className="text-3xl font-extrabold text-gray-900">
+                    {Math.round(hotel.rates.packages[0].chargeable_rate || 0)}
+                  </div>
+                  <div className="text-gray-500 text-base">
+                    + {Math.round((hotel.rates.packages[0].service_component || 0) + (hotel.rates.packages[0].gst || 0))} taxes & fees
+                  </div>
+                  <div className="text-gray-500 text-base">
+                    Per Night
+                  </div>
+                </>
+              ) : (
+                <div className="text-2xl font-bold text-blue-600">
+                  N/A
+                </div>
+              )}
               {hotel.rates.packages.length > 1 && (
                 <div className="text-xs text-gray-400">
                   {hotel.rates.packages.length} room types available

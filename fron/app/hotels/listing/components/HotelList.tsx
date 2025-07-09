@@ -9,9 +9,10 @@ interface HotelListProps {
   pollingStatus: string
   totalHotels: number
   onLoadMore: () => void
+  transactionIdentifier?: string
 }
 
-export default function HotelList({ hotels, loading, pollingStatus, totalHotels, onLoadMore }: HotelListProps) {
+export default function HotelList({ hotels, loading, pollingStatus, totalHotels, onLoadMore, transactionIdentifier }: HotelListProps) {
   if (loading && hotels.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -32,7 +33,7 @@ export default function HotelList({ hotels, loading, pollingStatus, totalHotels,
   return (
     <div className="space-y-4">
       {hotels.map((hotel) => (
-        <HotelCard key={hotel.id} hotel={hotel} />
+        <HotelCard key={hotel.id} hotel={hotel} transactionIdentifier={transactionIdentifier} />
       ))}
       
       {/* Load More Button */}

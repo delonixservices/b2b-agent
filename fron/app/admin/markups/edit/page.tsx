@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, AlertCircle, Percent, Settings, CreditCard, AlertTriangle } from 'lucide-react';
-import { createConfig, getAdminToken } from '../../../services/adminApi';
+import { getConfig, updateConfig, getAdminToken } from '../../../services/adminApi';
 
-export default function CreateConfigPage() {
+export default function EditConfigPage() {
   const router = useRouter();
   const token = getAdminToken();
   
@@ -25,9 +25,46 @@ export default function CreateConfigPage() {
     }
   });
   
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({});
+
+  useEffect(() => {
+    if (token) {
+      fetchConfig();
+    }
+  }, [token]);
+
+  const fetchConfig = async () => {
+    try {
+      setLoading(true);
+      const response = await getConfig(token!);
+      const config = response.data.config;
+      
+      setFormData({
+        markup: {
+          type: config.markup.type,
+          value: config.markup.value.toString()
+        },
+        service_charge: {
+          type: config.service_charge.type,
+          value: config.service_charge.value.toString()
+        },
+        processing_fee: config.processing_fee.toString(),
+        cancellation_charge: {
+          type: config.cancellation_charge.type,
+          value: config.cancellation_charge.value.toString()
+        }
+      });
+      setError(null);
+    } catch (err) {
+      setError('Failed to fetch configuration');
+      console.error('Error fetching configuration:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const validateForm = () => {
     const errors: {[key: string]: string} = {};
@@ -88,10 +125,10 @@ export default function CreateConfigPage() {
     if (!validateForm()) return;
 
     try {
-      setLoading(true);
+      setSaving(true);
       setError(null);
 
-      await createConfig(token!, {
+      await updateConfig(token!, {
         markup: {
           type: formData.markup.type,
           value: Number(formData.markup.value)
@@ -109,9 +146,9 @@ export default function CreateConfigPage() {
 
       router.push('/admin/markups');
     } catch (err: any) {
-      setError(err.message || 'Failed to create configuration');
+      setError(err.message || 'Failed to update configuration');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -137,6 +174,17 @@ export default function CreateConfigPage() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 rounded w-1/4 mb-6"></div>
+          <div className="h-16 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6">
       {/* Header */}
@@ -149,8 +197,8 @@ export default function CreateConfigPage() {
           <span>Back</span>
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Create Pricing Configuration</h1>
-          <p className="text-gray-600">Set global pricing settings for all hotel bookings</p>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Pricing Configuration</h1>
+          <p className="text-gray-600">Update global pricing settings for all hotel bookings</p>
         </div>
       </div>
 
@@ -434,11 +482,11 @@ export default function CreateConfigPage() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={loading}
+              disabled={saving}
               className="flex items-center space-x-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save className="w-4 h-4" />
-              <span>{loading ? 'Creating...' : 'Create Configuration'}</span>
+              <span>{saving ? 'Updating...' : 'Update Configuration'}</span>
             </button>
           </div>
         </form>

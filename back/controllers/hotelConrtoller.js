@@ -8,6 +8,7 @@ const User = require('../models/user');
 const { Employee } = require('../models/user');
 const BookingPolicy = require('../models/booking');
 const Transaction = require('../models/hoteltransactions');
+const markupService = require('../services/markupService');
 
 const limitRegionIds = (regionIds, maxCount = 50) => {
     if (!regionIds || typeof regionIds !== 'string') {
@@ -37,55 +38,48 @@ const withTimeout = (promise, timeoutMs, operationName) => {
 };
 
 /**
- * Apply owner markup to a hotel package
+ * Apply owner markup to a hotel package using markupService
  * @param {Object} hotelPackage - The hotel package to apply markup to
  * @returns {Object} - Updated hotel package with markup applied
  */
 const applyOwnerMarkup = async (hotelPackage) => {
   try {
-    // Get the active global markup
-    const markup = await Markup.findOne({ isActive: true });
+    // Log original package details
+    console.log('=== ORIGINAL PACKAGE DETAILS ===');
+    console.log('Base Amount:', hotelPackage.base_amount);
+    console.log('Room Rate:', hotelPackage.room_rate);
+    console.log('Chargeable Rate:', hotelPackage.chargeable_rate);
+    console.log('Service Component:', hotelPackage.service_component);
+    console.log('GST:', hotelPackage.gst);
+    console.log('=== END ORIGINAL PACKAGE DETAILS ===');
+
+    // Use room_rate as base_amount if base_amount is not available
+    const baseAmount = hotelPackage.base_amount || hotelPackage.room_rate || 0;
     
-    if (!markup) {
-      console.log('No active markup found, returning original package');
-      return hotelPackage;
-    }
-
-    const baseAmount = hotelPackage.base_amount || 0;
-    let markupAmount = 0;
-
-    // Calculate markup based on type
-    if (markup.type === 'percentage') {
-      markupAmount = (baseAmount * markup.value) / 100;
-    } else {
-      markupAmount = markup.value;
-    }
-
-    // Apply markup to the package
-    const updatedPackage = {
+    // Set the base amount for markup calculation
+    const packageForMarkup = {
       ...hotelPackage,
       base_amount: baseAmount,
-      markup_amount: markupAmount,
-      markup_details: {
-        id: markup._id,
-        name: markup.name,
-        type: markup.type,
-        value: markup.value
-      },
-      chargeable_rate: baseAmount + markupAmount
+      chargeable_rate: baseAmount
     };
 
-    // Update other price fields if they exist
-    if (hotelPackage.service_component !== undefined) {
-      updatedPackage.service_component = hotelPackage.service_component;
-    }
-    if (hotelPackage.gst !== undefined) {
-      updatedPackage.gst = hotelPackage.gst;
-    }
+    // Apply markup using markupService
+    await markupService.addMarkup(packageForMarkup);
 
-    return updatedPackage;
+    // Log markup calculation results
+    console.log('=== MARKUP SERVICE CALCULATION RESULTS ===');
+    console.log('Original Base Amount:', baseAmount);
+    console.log('Updated Base Amount:', packageForMarkup.base_amount);
+    console.log('Service Component:', packageForMarkup.service_component);
+    console.log('GST:', packageForMarkup.gst);
+    console.log('Final Chargeable Rate:', packageForMarkup.chargeable_rate);
+    console.log('=== END MARKUP SERVICE CALCULATION RESULTS ===');
+
+    // Return the updated package with all markup calculations
+    return packageForMarkup;
+
   } catch (error) {
-    console.error('Error applying owner markup:', error);
+    console.error('Error applying owner markup using markupService:', error);
     // Return original package if markup application fails
     return hotelPackage;
   }
@@ -330,6 +324,193 @@ const calculatePagination = (totalItems, page, perPage, currentCount) => {
   };
 };
 
+exports.search = async (req, res, next) => {
+  console.log('=== SEARCH FUNCTION START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+  
+  const startTime = Date.now();
+
+  // Validate search request
+  const validation = validateSearchRequest(req);
+  if (!validation.isValid) {
+    return res.status(400).json({
+      message: 'Validation failed',
+      errors: validation.errors
+    });
+  }
+
+  const { details, area, checkindate, checkoutdate, page, perPage, currentHotelsCount, filters } = req.body;
+  const { validatedData } = validation;
+
+  // Process room details
+  const roomInfo = processRoomDetails(details);
+  
+  console.log('Processed room details:', roomInfo);
+
+  // Create search object
+  const searchObj = {
+    search: {
+      source_market: "IN",
+      type: "hotel",
+      check_in_date: checkindate,
+      check_out_date: checkoutdate,
+      total_adult_count: roomInfo.totalAdult.toString(),
+      total_child_count: roomInfo.totalChild.toString(),
+      total_room_count: roomInfo.totalRooms.toString(),
+      details: roomInfo.details,
+      area: {
+        id: area.id,
+        type: area.type,
+        name: area.name
+      }
+    }
+  };
+
+  console.log('Search object:', JSON.stringify(searchObj, null, 2));
+
+  let client;
+  try {
+    console.log('Attempting Redis connection...');
+    client = await withTimeout(getRedisClient(), 10000, 'Redis connection');
+    console.log('Redis connection successful:', client ? 'Yes' : 'No');
+  } catch (err) {
+    console.error('Failed to connect to Redis:', err);
+    // Continue without Redis cache if connection fails
+  }
+
+  try {
+    // Get search data (cached or from API)
+    const data = await getSearchData(searchObj, client);
+    
+    if (!data || !data.data) {
+      console.log('No data in API response');
+      return res.status(404).json({
+        message: 'No hotels found'
+      });
+    }
+
+    if (!data.data.hotels || !Array.isArray(data.data.hotels) || data.data.hotels.length === 0) {
+      console.log('No hotels in API response');
+      return res.status(404).json({
+        message: 'No hotels found'
+      });
+    }
+
+    console.log('Hotels found:', data.data.hotels.length);
+
+    // Apply filters if provided
+    let filteredHotels = data.data.hotels;
+    if (filters && Object.keys(filters).length > 0) {
+      filteredHotels = applyFilters(data.data.hotels, filters);
+      console.log('Hotels after filtering:', filteredHotels.length);
+    }
+
+    // Apply markup to all hotel packages
+    const hotelsWithMarkup = await Promise.all(
+      filteredHotels.map(async (hotel) => {
+        if (hotel.rates && hotel.rates.packages) {
+          const packagesWithMarkup = await Promise.all(
+            hotel.rates.packages.map(async (pkg) => {
+              try {
+                return await applyOwnerMarkup(pkg);
+              } catch (err) {
+                console.error('Error applying markup to package:', err);
+                return pkg; // Return original package if markup fails
+              }
+            })
+          );
+          return {
+            ...hotel,
+            rates: {
+              ...hotel.rates,
+              packages: packagesWithMarkup
+            }
+          };
+        }
+        return hotel;
+      })
+    );
+
+    // Calculate pagination
+    const pagination = calculatePagination(
+      hotelsWithMarkup.length,
+      validatedData.page,
+      validatedData.perPage,
+      validatedData.currentHotelsCount
+    );
+
+    // Get hotels for current page
+    const startIndex = currentHotelsCount || 0;
+    const endIndex = startIndex + validatedData.perPage;
+    const hotelsForPage = hotelsWithMarkup.slice(startIndex, endIndex);
+
+    const response = {
+      data: {
+        search: data.data.search,
+        hotels: hotelsForPage,
+        currentHotelsCount: pagination.currentItemsCount,
+        totalHotelsCount: pagination.totalItemsCount,
+        totalPages: pagination.totalPages,
+        page: pagination.page,
+        perPage: pagination.perPage,
+        status: pagination.pollingStatus,
+        transaction_identifier: data.transaction_identifier
+      }
+    };
+
+    const totalTime = Date.now() - startTime;
+    console.log('=== SEARCH FUNCTION COMPLETED ===');
+    console.log('Total execution time:', totalTime, 'ms');
+    console.log('Hotels returned:', hotelsForPage.length);
+    console.log('Final response status:', pagination.pollingStatus);
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('=== ERROR IN SEARCH FUNCTION ===');
+    console.error('Error details:', error);
+    
+    // Handle API errors specifically
+    if (error.name === 'APIError') {
+      console.error('API Error Details:', {
+        errorCode: error.errorCode,
+        errorMsg: error.errorMsg,
+        status: error.status
+      });
+      
+      return res.status(500).json({
+        message: 'Hotel search service temporarily unavailable',
+        error: error.errorMsg || 'External API error',
+        errorCode: error.errorCode
+      });
+    }
+    
+    // Handle timeout errors
+    if (error.message && error.message.includes('timeout')) {
+      return res.status(504).json({
+        message: 'Hotel search request timed out',
+        error: 'The search request took too long to complete. Please try again.'
+      });
+    }
+    
+    // Handle network errors
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        message: 'Hotel search service unavailable',
+        error: 'Unable to connect to the hotel search service. Please try again later.'
+      });
+    }
+    
+    // Generic error response
+    return res.status(500).json({
+      message: 'An error occurred while searching for hotels',
+      error: error.message || 'Unknown error'
+    });
+  }
+};
+
 exports.suggest = async (req, res, next) => {
   console.log('=== SUGGEST FUNCTION START ===');
   console.log('Request from:', req.user.type, 'ID:', req.user.id);
@@ -566,7 +747,42 @@ exports.suggest = async (req, res, next) => {
       }
     }
 
-    return next(err);
+    // Handle API errors specifically
+    if (err.name === 'APIError') {
+      console.error('API Error Details:', {
+        errorCode: err.errorCode,
+        errorMsg: err.errorMsg,
+        status: err.status
+      });
+      
+      return res.status(500).json({
+        message: 'Hotel suggestion service temporarily unavailable',
+        error: err.errorMsg || 'External API error',
+        errorCode: err.errorCode
+      });
+    }
+    
+    // Handle timeout errors
+    if (err.message && err.message.includes('timeout')) {
+      return res.status(504).json({
+        message: 'Hotel suggestion request timed out',
+        error: 'The suggestion request took too long to complete. Please try again.'
+      });
+    }
+    
+    // Handle network errors
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        message: 'Hotel suggestion service unavailable',
+        error: 'Unable to connect to the hotel suggestion service. Please try again later.'
+      });
+    }
+    
+    // Generic error response
+    return res.status(500).json({
+      message: 'An error occurred while fetching hotel suggestions',
+      error: err.message || 'Unknown error'
+    });
   }
 
   console.log('Calculating pagination...');
@@ -634,243 +850,6 @@ exports.suggest = async (req, res, next) => {
 
   res.json(response);
 }
-
-exports.searchHotels = async (req, res, next) => {
-  console.log('=== SEARCH HOTELS FUNCTION START ===');
-  console.log('Request from:', req.user.type, 'ID:', req.user.id);
-  const startTime = Date.now();
-
-  try {
-    // Validate request parameters
-    const validation = validateSearchRequest(req);
-    if (!validation.isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: validation.errors
-      });
-    }
-
-    const { page, perPage, currentHotelsCount } = validation.validatedData;
-    const { details, area, checkindate, checkoutdate, transaction_identifier, filters = {} } = req.body;
-
-    console.log('Validated parameters:', { page, perPage, currentHotelsCount });
-
-    // Process room details
-    const roomInfo = processRoomDetails(details);
-    console.log('Room details processed:', roomInfo);
-
-    // Limit region IDs to maximum 50 to avoid Spring Boot backend issues
-    const limitedAreaId = limitRegionIds(area.id, 50);
-
-    // Build search object
-    const searchObj = {
-      search: {
-        source_market: "IN",
-        type: area.type,
-        id: limitedAreaId,
-        name: area.name,
-        check_in_date: checkindate,
-        check_out_date: checkoutdate,
-        total_adult_count: roomInfo.totalAdult.toString(),
-        total_child_count: roomInfo.totalChild.toString(),
-        total_room_count: roomInfo.totalRooms.toString(),
-        details: roomInfo.details
-      }
-    };
-
-    if (transaction_identifier && transaction_identifier !== "undefined") {
-      searchObj.search.transaction_identifier = transaction_identifier;
-    }
-
-    console.log('Search object:', JSON.stringify(searchObj, null, 2));
-
-    // Get Redis client
-    let client;
-    try {
-      client = await withTimeout(getRedisClient(), 10000, 'Redis connection');
-    } catch (err) {
-      console.error('Failed to connect to Redis:', err);
-      // Continue without Redis cache if connection fails
-    }
-
-    // Get search data (cached or from API)
-    let data;
-    try {
-      data = await getSearchData(searchObj, client);
-    } catch (err) {
-      console.error('Error fetching search data:', err);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch hotel data'
-      });
-    }
-
-    // Validate API response
-    if (!data || !data.data) {
-      console.log('No data received from API:', data);
-      return res.status(404).json({
-        success: false,
-        message: 'No hotels found'
-      });
-    }
-
-    if (!data.data.hotels || data.data.hotels.length === 0) {
-      console.log('No hotels in API response');
-      return res.status(404).json({
-        success: false,
-        message: 'No hotels found for the given criteria'
-      });
-    }
-
-    // Process hotels with pagination
-    const hotelsList = [...data.data.hotels];
-    console.log(`Total hotels received: ${hotelsList.length}`);
-
-    // Calculate pagination
-    const pagination = calculatePagination(hotelsList.length, page, perPage, currentHotelsCount);
-    
-    if (page > pagination.totalPages) {
-      return res.status(422).json({
-        success: false,
-        message: 'Invalid page number'
-      });
-    }
-
-    // Select hotels for current page
-    const lowerBound = currentHotelsCount;
-    const upperBound = Math.min(lowerBound + perPage, hotelsList.length);
-    const selectedHotels = hotelsList.slice(lowerBound, upperBound);
-
-    console.log(`Processing ${selectedHotels.length} hotels for page ${page}`);
-
-    // Process hotels with markup
-    let processedHotels = [];
-    let minPrice = Infinity;
-    let maxPrice = 0;
-
-    try {
-      // Process each hotel with markup (skip database insertion)
-      const hotelPromises = selectedHotels.map(async (hotel) => {
-        try {
-          hotel.hotelId = hotel._id;
-          
-          // Process all packages for the hotel
-          const processedPackages = [];
-          let hotelMinPrice = Infinity;
-          let hotelMaxPrice = 0;
-
-          for (const hotelPackage of hotel.rates.packages) {
-            if (!hotelPackage) {
-              console.log(`Skipping invalid package for hotel ${hotel.name}`);
-              continue;
-            }
-
-            try {
-              // Apply owner markup to package
-              const updatedPackage = await applyOwnerMarkup(hotelPackage);
-              processedPackages.push(updatedPackage);
-              
-              // Update hotel price range
-              const packagePrice = updatedPackage.chargeable_rate || updatedPackage.base_amount || 0;
-              if (packagePrice < hotelMinPrice) {
-                hotelMinPrice = packagePrice;
-              }
-              if (packagePrice > hotelMaxPrice) {
-                hotelMaxPrice = packagePrice;
-              }
-            } catch (err) {
-              console.log(`Error applying markup to package in hotel ${hotel.name}:`, err);
-              // Include package without markup if markup fails
-              processedPackages.push(hotelPackage);
-            }
-          }
-
-          // Update hotel packages
-          hotel.rates.packages = processedPackages.length > 0 ? processedPackages : [{
-            base_amount: 0,
-            service_component: 0,
-            gst: 0,
-            chargeable_rate: 0
-          }];
-
-          // Update global price range
-          if (hotelMinPrice < minPrice) {
-            minPrice = hotelMinPrice;
-          }
-          if (hotelMaxPrice > maxPrice) {
-            maxPrice = hotelMaxPrice;
-          }
-
-          return hotel;
-        } catch (err) {
-          console.error(`Error processing hotel ${hotel.name}:`, err);
-          return null;
-        }
-      });
-
-      const processedResults = await Promise.all(hotelPromises);
-      processedHotels = processedResults.filter(hotel => hotel !== null);
-
-    } catch (err) {
-      console.error('Error processing hotels:', err);
-      return res.status(500).json({
-        success: false,
-        message: 'Error processing hotel data'
-      });
-    }
-
-    // Apply filters
-    const filteredHotels = applyFilters(processedHotels, filters);
-    console.log(`Hotels after filtering: ${filteredHotels.length}`);
-
-    // Update pagination for filtered results
-    const actualHotelsCount = filteredHotels.length;
-    const actualCurrentHotelsCount = currentHotelsCount + actualHotelsCount;
-    
-    const finalPagination = {
-      currentHotelsCount: actualCurrentHotelsCount,
-      totalHotelsCount: hotelsList.length, // Keep original total for pagination
-      totalPages: Math.ceil(hotelsList.length / perPage),
-      pollingStatus: pagination.pollingStatus,
-      page,
-      perPage
-    };
-
-    // Prepare response
-    const response = {
-      success: true,
-      message: 'Hotels retrieved successfully',
-      data: {
-        search: data.data.search,
-        region: data.data.region,
-        hotels: filteredHotels,
-        price: {
-          minPrice: Math.floor(minPrice === Infinity ? 0 : minPrice),
-          maxPrice: Math.ceil(maxPrice === 0 ? 1 : maxPrice)
-        },
-        pagination: finalPagination,
-        transaction_identifier: data.transaction_identifier
-      }
-    };
-
-    const totalTime = Date.now() - startTime;
-    console.log('=== SEARCH HOTELS FUNCTION COMPLETED ===');
-    console.log(`Total execution time: ${totalTime}ms`);
-    console.log(`Hotels returned: ${filteredHotels.length}`);
-
-    res.json(response);
-
-  } catch (error) {
-    console.error('=== ERROR IN SEARCH HOTELS FUNCTION ===');
-    console.error('Error details:', error);
-    
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-};
 
 exports.searchPackages = async (req, res, next) => {
   console.log('Request from:', req.user.type, 'ID:', req.user.id);
@@ -948,7 +927,45 @@ data = await Api.post("/search", {
 'search': searchObj
 });
 } catch (err) {
-return next(err);
+  console.error('=== ERROR IN SEARCH PACKAGES FUNCTION ===');
+  console.error('Error details:', err);
+  
+  // Handle API errors specifically
+  if (err.name === 'APIError') {
+    console.error('API Error Details:', {
+      errorCode: err.errorCode,
+      errorMsg: err.errorMsg,
+      status: err.status
+    });
+    
+    return res.status(500).json({
+      message: 'Hotel package search service temporarily unavailable',
+      error: err.errorMsg || 'External API error',
+      errorCode: err.errorCode
+    });
+  }
+  
+  // Handle timeout errors
+  if (err.message && err.message.includes('timeout')) {
+    return res.status(504).json({
+      message: 'Hotel package search request timed out',
+      error: 'The package search request took too long to complete. Please try again.'
+    });
+  }
+  
+  // Handle network errors
+  if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+    return res.status(503).json({
+      message: 'Hotel package search service unavailable',
+      error: 'Unable to connect to the hotel package search service. Please try again later.'
+    });
+  }
+  
+  // Generic error response
+  return res.status(500).json({
+    message: 'An error occurred while searching for hotel packages',
+    error: err.message || 'Unknown error'
+  });
 }
 
 console.log('Search object:', searchObj);
@@ -993,8 +1010,20 @@ const promiseArray = selectedHotel.rates.packages.map(async (pkg) => {
 // console.log(pkg.booking_key);
 // console.log(pkg.chargeable_rate);
 try {
+// Log original package from Java API
+console.log('=== ORIGINAL PACKAGE FROM JAVA API (searchPackages) ===');
+console.log('Hotel:', selectedHotel.name);
+console.log('Package Details:', JSON.stringify(pkg, null, 2));
+
 // addMarkup method will apply markup and other charges on hotelPackage
 const updatedPackage = await applyOwnerMarkup(pkg);
+
+// Log updated package with markup
+console.log('=== UPDATED PACKAGE WITH MARKUP (searchPackages) ===');
+console.log('Hotel:', selectedHotel.name);
+console.log('Updated Package Details:', JSON.stringify(updatedPackage, null, 2));
+console.log('=== END PACKAGE LOG (searchPackages) ===');
+
 Object.assign(pkg, updatedPackage);
 } catch (err) {
 return res.status(500).json({
@@ -1008,6 +1037,22 @@ const hotelPackages = await Promise.all(promiseArray);
 
 // update hotel packages with updated rates
 selectedHotel.rates.packages = hotelPackages;
+
+// Log final packages summary
+console.log('=== FINAL PACKAGES SUMMARY ===');
+console.log('Hotel:', selectedHotel.name);
+console.log('Total Packages:', selectedHotel.rates.packages.length);
+selectedHotel.rates.packages.forEach((pkg, index) => {
+  console.log(`Package ${index + 1}:`, {
+    room_type: pkg.room_details?.room_type || pkg.room_details?.description,
+    base_amount: pkg.base_amount,
+    markup_amount: pkg.markup_amount,
+    chargeable_rate: pkg.chargeable_rate,
+    markup_details: pkg.markup_details
+  });
+});
+console.log('=== END FINAL PACKAGES SUMMARY ===');
+
 // console.log(selectedHotel.rates.packages[0]);
 // console.log(data.data.hotels[0].rates.packages)
 // add hotel to the db
@@ -1147,7 +1192,7 @@ exports.bookingpolicy = async (req, res, next) => {
     }
     
     // Format package object with exact structure
-    const formattedPackage = {
+    const requestPackage = {
       booking_key: package.booking_key,
       chargeable_rate: package.chargeable_rate,
       chargeable_rate_currency: package.chargeable_rate_currency || "INR",
@@ -1171,13 +1216,17 @@ exports.bookingpolicy = async (req, res, next) => {
         supplier_description: package.room_details?.supplier_description || "Standard Room"
       },
       room_rate: package.room_rate,
-      room_rate_currency: package.room_rate_currency || "INR"
+      room_rate_currency: package.room_rate_currency || "INR",
+      hotel_fees: package.hotel_fees,
+      taxes_and_fees: package.taxes_and_fees,
+      daily_number_of_units: package.daily_number_of_units || null,
+      created_at: package.created_at,
     };
 
     // Log the package data for debugging
     console.log('Package Data:', {
       originalPackage: packageData,
-      formattedPackage: formattedPackage,
+      requestPackage: requestPackage,
       missingFields: {
         chargeable_rate: !package.chargeable_rate,
         client_commission: !package.client_commission,
@@ -1201,7 +1250,7 @@ exports.bookingpolicy = async (req, res, next) => {
     // Create final payload
     const payload = {
       bookingpolicy: {
-        package: formattedPackage,
+        package: requestPackage,
         search: formattedSearch,
         transaction_identifier: transaction_id
       }
@@ -1223,6 +1272,38 @@ exports.bookingpolicy = async (req, res, next) => {
         response: apiError.response?.data,
         status: apiError.response?.status
       });
+      
+      // Handle API errors specifically
+      if (apiError.name === 'APIError') {
+        console.error('API Error Details:', {
+          errorCode: apiError.errorCode,
+          errorMsg: apiError.errorMsg,
+          status: apiError.status
+        });
+        
+        return res.status(500).json({
+          message: 'Booking policy service temporarily unavailable',
+          error: apiError.errorMsg || 'External API error',
+          errorCode: apiError.errorCode
+        });
+      }
+      
+      // Handle timeout errors
+      if (apiError.message && apiError.message.includes('timeout')) {
+        return res.status(504).json({
+          message: 'Booking policy request timed out',
+          error: 'The booking policy request took too long to complete. Please try again.'
+        });
+      }
+      
+      // Handle network errors
+      if (apiError.code === 'ECONNREFUSED' || apiError.code === 'ENOTFOUND') {
+        return res.status(503).json({
+          message: 'Booking policy service unavailable',
+          error: 'Unable to connect to the booking policy service. Please try again later.'
+        });
+      }
+      
       throw new Error(`Booking policy API error: ${apiError.message}`);
     }
 
@@ -1235,27 +1316,58 @@ exports.bookingpolicy = async (req, res, next) => {
       return res.status(500).send("Unable to get the booking policy - Invalid API response");
     }
     
-    // bookingPolicy = refrence of data.data
+    // bookingPolicy = reference of data.data
     const bookingPolicy = data.data;
     const hotelPackage = bookingPolicy.package;
-    
+
+    // Build a formattedPackage with only the required fields
+    const formattedPackage = {
+      booking_key: hotelPackage.booking_key,
+      chargeable_rate: hotelPackage.chargeable_rate,
+      chargeable_rate_currency: hotelPackage.chargeable_rate_currency || "INR",
+      chargeable_rate_with_tax_excluded: hotelPackage.chargeable_rate_with_tax_excluded || 0,
+      client_commission: hotelPackage.client_commission,
+      client_commission_currency: hotelPackage.client_commission_currency || "INR",
+      client_commission_percentage: hotelPackage.client_commission_percentage || 0,
+      guest_discount_with_tax_excluded_percentage: hotelPackage.guest_discount_with_tax_excluded_percentage || 0,
+      hotel_id: hotelPackage.hotel_id || hotel.id,
+      indicative_market_rates: hotelPackage.indicative_market_rates || [],
+      rate_type: hotelPackage.rate_type || "net",
+      room_details: {
+        beds: hotelPackage.room_details?.beds || { queen: 1 },
+        description: hotelPackage.room_details?.description || "Standard Room",
+        food: hotelPackage.room_details?.food || 1,
+        non_refundable: hotelPackage.room_details?.non_refundable || false,
+        rate_plan_code: hotelPackage.room_details?.rate_plan_code || "",
+        room_code: hotelPackage.room_details?.room_code || "",
+        room_type: hotelPackage.room_details?.room_type || "Standard",
+        room_view: hotelPackage.room_details?.room_view || "",
+        supplier_description: hotelPackage.room_details?.supplier_description || "Standard Room"
+      },
+      room_rate: hotelPackage.room_rate,
+      room_rate_currency: hotelPackage.room_rate_currency || "INR",
+      hotel_fees: hotelPackage.hotel_fees,
+      taxes_and_fees: hotelPackage.taxes_and_fees,
+      daily_number_of_units: hotelPackage.daily_number_of_units || null,
+      created_at: hotelPackage.created_at,
+    };
+
+    // Apply owner markup to the formattedPackage (just like in search)
     try {
-      // addMarkup method will apply markup and other charges on hotelPackage
-      await applyOwnerMarkup(hotelPackage);
+      await applyOwnerMarkup(formattedPackage);
     } catch (err) {
       return res.status(500).json({
         'message': `${err}`
-      })
+      });
     }
-    
-    const booking_policy_id = bookingPolicy.booking_policy_id || `bp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
+    // Save booking policy as before
     const booking_policy = await new BookingPolicy({
       'booking_policy': bookingPolicy,
       'search': search,
       'transaction_identifier': transaction_id,
       "hotel": hotel._id,
-      'booking_policy_id': booking_policy_id,
+      'booking_policy_id': bookingPolicy.booking_policy_id || `bp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       'event_id': bookingPolicy.event_id || "",
       'statusToken': bookingPolicy.statusToken || "",
       'session_id': bookingPolicy.session_id || "",
@@ -1264,71 +1376,25 @@ exports.bookingpolicy = async (req, res, next) => {
       'companyId': req.user.type === 'company' ? req.user.id : null,
       'employeeId': req.user.type === 'employee' ? req.user.id : null
     });
-    
     await booking_policy.save();
-    
-    // Format the response to match the desired structure
-    const formattedResponse = {
+
+    // Build the response as per the required structure
+    const response = {
       data: {
-        booking_policy_id: booking_policy_id,
-        package: {
-          ...hotelPackage,
-          // Ensure all required fields are present
-          rate_type: hotelPackage.rate_type || "Dynamic",
-          booking_key: hotelPackage.booking_key || bookingKey,
-          chargeable_rate_currency: hotelPackage.chargeable_rate_currency || "INR",
-          hotel_id: hotelPackage.hotel_id || hotel.id,
-          room_details: {
-            supplier_description: hotelPackage.room_details?.supplier_description || "Standard",
-            room_code: hotelPackage.room_details?.room_code || 1,
-            room_view: hotelPackage.room_details?.room_view || "",
-            description: hotelPackage.room_details?.description || "Classic",
-            rate_plan_code: hotelPackage.room_details?.rate_plan_code || 0,
-            non_refundable: hotelPackage.room_details?.non_refundable || false,
-            beds: hotelPackage.room_details?.beds || {},
-            food: hotelPackage.room_details?.food || "",
-            room_type: hotelPackage.room_details?.room_type || "Classic"
-          },
-          room_rate_currency: hotelPackage.room_rate_currency || "INR",
-          client_commission: hotelPackage.client_commission || 0,
-          client_commission_currency: hotelPackage.client_commission_currency || "INR",
-          room_rate: hotelPackage.room_rate || 0,
-          taxes_and_fees: hotelPackage.taxes_and_fees || {
-            estimated_total: {
-              value: 0
-            }
-          },
-          indicative_market_rates: hotelPackage.indicative_market_rates || [],
-          chargeable_rate: hotelPackage.chargeable_rate || 0,
-          base_amount: hotelPackage.base_amount || 0,
-          service_component: hotelPackage.service_component || 0,
-          gst: hotelPackage.gst || 0
-        },
-        event_id: booking_policy.event_id || "",
-        statusToken: booking_policy.statusToken || "",
-        session_id: booking_policy.session_id || "",
-        cancellation_policy: bookingPolicy.cancellation_policy || {
-          cancellation_policies: [
-            {
-              penalty_percentage: 0,
-              date_to: "",
-              date_from: ""
-            }
-          ],
-          remarks: "Standard cancellation policy applies. Please check with the hotel for specific terms."
-        }
+        booking_policy_id: bookingPolicy.booking_policy_id,
+        package: formattedPackage,
+        event_id: bookingPolicy.event_id,
+        statusToken: bookingPolicy.statusToken,
+        session_id: bookingPolicy.session_id,
+        cancellation_policy: bookingPolicy.cancellation_policy
       },
       transaction_identifier: transaction_id,
-      id: booking_policy_id,
+      id: bookingPolicy.booking_policy_id,
       api: "post::bookingpolicy",
       version: "v1"
     };
-    
-    console.log('=== BOOKING POLICY REQUEST COMPLETED ===');
-    console.log('Response sent successfully');
-    console.log('Response timestamp:', new Date().toISOString());
-    
-    res.json(formattedResponse);
+
+    res.json(response);
   } catch (err) {
     console.error('=== BOOKING POLICY REQUEST ERROR ===');
     console.error('Error details:', {
@@ -1785,6 +1851,296 @@ exports.getTransactionIdentifier = async (req, res, next) => {
     
   } catch (error) {
     console.error('=== ERROR IN GET TRANSACTION IDENTIFIER FUNCTION ===');
+    console.error('Error details:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+exports.searchHotels = async (req, res, next) => {
+  console.log('=== SEARCH HOTELS FUNCTION START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  const startTime = Date.now();
+
+  try {
+    // Validate request parameters
+    const validation = validateSearchRequest(req);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: validation.errors
+      });
+    }
+
+    const { page, perPage, currentHotelsCount } = validation.validatedData;
+    const { details, area, checkindate, checkoutdate, transaction_identifier, filters = {} } = req.body;
+
+    console.log('Validated parameters:', { page, perPage, currentHotelsCount });
+
+    // Process room details
+    const roomInfo = processRoomDetails(details);
+    console.log('Room details processed:', roomInfo);
+
+    // Limit region IDs to maximum 50 to avoid Spring Boot backend issues
+    const limitedAreaId = limitRegionIds(area.id, 50);
+
+    // Build search object
+    const searchObj = {
+      search: {
+        source_market: "IN",
+        type: area.type,
+        id: limitedAreaId,
+        name: area.name,
+        check_in_date: checkindate,
+        check_out_date: checkoutdate,
+        total_adult_count: roomInfo.totalAdult.toString(),
+        total_child_count: roomInfo.totalChild.toString(),
+        total_room_count: roomInfo.totalRooms.toString(),
+        details: roomInfo.details
+      }
+    };
+
+    if (transaction_identifier && transaction_identifier !== "undefined") {
+      searchObj.search.transaction_identifier = transaction_identifier;
+    }
+
+    console.log('Search object:', JSON.stringify(searchObj, null, 2));
+
+    // Get Redis client
+    let client;
+    try {
+      client = await withTimeout(getRedisClient(), 10000, 'Redis connection');
+    } catch (err) {
+      console.error('Failed to connect to Redis:', err);
+      // Continue without Redis cache if connection fails
+    }
+
+    // Get search data (cached or from API)
+    let data;
+    try {
+      data = await getSearchData(searchObj, client);
+    } catch (err) {
+      console.error('=== ERROR IN SEARCH HOTELS FUNCTION ===');
+      console.error('Error details:', err);
+      
+      // Handle API errors specifically
+      if (err.name === 'APIError') {
+        console.error('API Error Details:', {
+          errorCode: err.errorCode,
+          errorMsg: err.errorMsg,
+          status: err.status
+        });
+        
+        return res.status(500).json({
+          success: false,
+          message: 'Hotel search service temporarily unavailable',
+          error: err.errorMsg || 'External API error',
+          errorCode: err.errorCode
+        });
+      }
+      
+      // Handle timeout errors
+      if (err.message && err.message.includes('timeout')) {
+        return res.status(504).json({
+          success: false,
+          message: 'Hotel search request timed out',
+          error: 'The search request took too long to complete. Please try again.'
+        });
+      }
+      
+      // Handle network errors
+      if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        return res.status(503).json({
+          success: false,
+          message: 'Hotel search service unavailable',
+          error: 'Unable to connect to the hotel search service. Please try again later.'
+        });
+      }
+      
+      // Generic error response
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch hotel data',
+        error: err.message || 'Unknown error'
+      });
+    }
+
+    // Validate API response
+    if (!data || !data.data) {
+      console.log('No data received from API:', data);
+      return res.status(404).json({
+        success: false,
+        message: 'No hotels found'
+      });
+    }
+
+    if (!data.data.hotels || data.data.hotels.length === 0) {
+      console.log('No hotels in API response');
+      return res.status(404).json({
+        success: false,
+        message: 'No hotels found for the given criteria'
+      });
+    }
+
+    // Process hotels with pagination
+    const hotelsList = [...data.data.hotels];
+    console.log(`Total hotels received: ${hotelsList.length}`);
+
+    // Calculate pagination
+    const pagination = calculatePagination(hotelsList.length, page, perPage, currentHotelsCount);
+    
+    if (page > pagination.totalPages) {
+      return res.status(422).json({
+        success: false,
+        message: 'Invalid page number'
+      });
+    }
+
+    // Select hotels for current page
+    const lowerBound = currentHotelsCount;
+    const upperBound = Math.min(lowerBound + perPage, hotelsList.length);
+    const selectedHotels = hotelsList.slice(lowerBound, upperBound);
+
+    console.log(`Processing ${selectedHotels.length} hotels for page ${page}`);
+
+    // Process hotels with markup application
+    let processedHotels = [];
+    let minPrice = Infinity;
+    let maxPrice = 0;
+
+    try {
+      // Process each hotel with markup application
+      const hotelPromises = selectedHotels.map(async (hotel) => {
+        try {
+          hotel.hotelId = hotel._id;
+          
+          // Apply markup to all hotel packages
+          if (hotel.rates && hotel.rates.packages) {
+            const packagesWithMarkup = await Promise.all(
+              hotel.rates.packages.map(async (pkg) => {
+                try {
+                  return await applyOwnerMarkup(pkg);
+                } catch (err) {
+                  console.error('Error applying markup to package:', err);
+                  return pkg; // Return original package if markup fails
+                }
+              })
+            );
+            
+            hotel.rates.packages = packagesWithMarkup;
+          }
+          
+          // Process all packages for the hotel (with markup applied)
+          const processedPackages = [];
+          let hotelMinPrice = Infinity;
+          let hotelMaxPrice = 0;
+
+          for (const hotelPackage of hotel.rates.packages) {
+            if (!hotelPackage) {
+              console.log(`Skipping invalid package for hotel ${hotel.name}`);
+              continue;
+            }
+
+            try {
+              // Use package with markup applied
+              processedPackages.push(hotelPackage);
+              
+              // Update hotel price range using chargeable_rate (which includes markup)
+              const packagePrice = hotelPackage.chargeable_rate || hotelPackage.base_amount || hotelPackage.room_rate || 0;
+              if (packagePrice < hotelMinPrice) {
+                hotelMinPrice = packagePrice;
+              }
+              if (packagePrice > hotelMaxPrice) {
+                hotelMaxPrice = packagePrice;
+              }
+            } catch (err) {
+              console.log(`Error processing package in hotel ${hotel.name}:`, err);
+              // Include package as-is if processing fails
+              processedPackages.push(hotelPackage);
+            }
+          }
+
+          // Update hotel packages
+          hotel.rates.packages = processedPackages.length > 0 ? processedPackages : [{
+            base_amount: 0,
+            service_component: 0,
+            gst: 0,
+            chargeable_rate: 0
+          }];
+
+          // Update global price range
+          if (hotelMinPrice < minPrice) {
+            minPrice = hotelMinPrice;
+          }
+          if (hotelMaxPrice > maxPrice) {
+            maxPrice = hotelMaxPrice;
+          }
+
+          return hotel;
+        } catch (err) {
+          console.error(`Error processing hotel ${hotel.name}:`, err);
+          return null;
+        }
+      });
+
+      const processedResults = await Promise.all(hotelPromises);
+      processedHotels = processedResults.filter(hotel => hotel !== null);
+
+    } catch (err) {
+      console.error('Error processing hotels:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Error processing hotel data'
+      });
+    }
+
+    // Apply filters
+    const filteredHotels = applyFilters(processedHotels, filters);
+    console.log(`Hotels after filtering: ${filteredHotels.length}`);
+
+    // Update pagination for filtered results
+    const actualHotelsCount = filteredHotels.length;
+    const actualCurrentHotelsCount = currentHotelsCount + actualHotelsCount;
+    
+    const finalPagination = {
+      currentHotelsCount: actualCurrentHotelsCount,
+      totalHotelsCount: hotelsList.length, // Keep original total for pagination
+      totalPages: Math.ceil(hotelsList.length / perPage),
+      pollingStatus: pagination.pollingStatus,
+      page,
+      perPage
+    };
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: 'Hotels retrieved successfully',
+      data: {
+        search: data.data.search,
+        region: data.data.region,
+        hotels: filteredHotels,
+        price: {
+          minPrice: Math.floor(minPrice === Infinity ? 0 : minPrice),
+          maxPrice: Math.ceil(maxPrice === 0 ? 1 : maxPrice)
+        },
+        pagination: finalPagination,
+        transaction_identifier: data.transaction_identifier
+      }
+    };
+
+    const totalTime = Date.now() - startTime;
+    console.log('=== SEARCH HOTELS FUNCTION COMPLETED ===');
+    console.log(`Total execution time: ${totalTime}ms`);
+    console.log(`Hotels returned: ${filteredHotels.length}`);
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('=== ERROR IN SEARCH HOTELS FUNCTION ===');
     console.error('Error details:', error);
     
     return res.status(500).json({

@@ -14,7 +14,8 @@ import {
   Shield,
   BarChart3,
   FileText,
-  Percent
+  Percent,
+  Wallet
 } from 'lucide-react';
 
 interface AdminData {
@@ -54,6 +55,7 @@ export default function AdminSidebar({ children }: AdminSidebarProps) {
   const navigationItems = [
     { name: 'Dashboard', href: '/admin/dashboard', icon: BarChart3 },
     { name: 'Companies', href: '/admin/details', icon: Building },
+    { name: 'Wallets', href: '/admin/wallets', icon: Wallet },
     { name: 'Markups', href: '/admin/markups', icon: Percent },
     { name: 'Users', href: '/admin/users', icon: Users },
     { name: 'Reports', href: '/admin/reports', icon: FileText },

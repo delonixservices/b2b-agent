@@ -72,7 +72,11 @@ export default function HotelListingPage() {
       
       if (children > 0) {
         roomDetail.child_count = childrenPerRoom
-        roomDetail.children = childrenAges.slice(i * childrenPerRoom, (i + 1) * childrenPerRoom)
+        // Add children ages if available
+        const roomChildrenAges = childrenAges.slice(i * childrenPerRoom, (i + 1) * childrenPerRoom)
+        if (roomChildrenAges.length > 0) {
+          roomDetail.children = roomChildrenAges.map(age => ({ age }))
+        }
       }
       
       details.push(roomDetail)
@@ -91,17 +95,21 @@ export default function HotelListingPage() {
       
       const searchPayload = {
         details: roomDetails,
-        area: params.area,
+        area: {
+          ...params.area,
+          transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined
+        },
         checkindate: params.checkIn,
         checkoutdate: params.checkOut,
         page,
         perPage: 50, // Increased to show all 50 hotels
         currentHotelsCount,
-        transaction_identifier: transactionIdentifier || undefined,
+        transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
         filters
       }
 
-      console.log('Search payload:', searchPayload)
+      console.log('Search payload:', JSON.stringify(searchPayload, null, 2))
+      console.log('Room details structure:', JSON.stringify(roomDetails, null, 2))
 
       // Get authentication token from localStorage
       const token = localStorage.getItem('token')
@@ -136,6 +144,7 @@ export default function HotelListingPage() {
         
         if (data.data.transaction_identifier) {
           setTransactionIdentifier(data.data.transaction_identifier)
+          console.log('Setting transaction_identifier from search response:', data.data.transaction_identifier)
         }
         setCurrentPage(page)
       } else {
@@ -255,6 +264,7 @@ export default function HotelListingPage() {
               pollingStatus={pollingStatus}
               totalHotels={totalHotels}
               onLoadMore={loadMoreHotels}
+              transactionIdentifier={transactionIdentifier}
             />
           </div>
         </div>

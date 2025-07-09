@@ -1,8 +1,11 @@
 const Admin = require('../models/admin');
 const { Company, Employee } = require('../models/user');
-const Markup = require('../models/markup');
+const Config = require('../models/config');
+const Hotel = require('../models/hotels');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const isSuperAdmin = require('../middleware/isadmin');
+const markupService = require('../services/markupService');
 
 // Owner/Admin Login
 const ownerLogin = async (req, res) => {
@@ -295,81 +298,124 @@ const createSuperAdmin = async (req, res) => {
   }
 };
 
-// Create or update global markup (only one markup allowed)
-const createMarkup = async (req, res) => {
+// Create or update global configuration (only super admin can create/update)
+const createConfig = async (req, res) => {
   try {
-    const { name, description, type, value } = req.body;
-    const adminId = req.user.id; // From auth middleware
+    // Check if user is super admin
+    if (req.user.type !== 'admin' || req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only super admin can manage configuration.'
+      });
+    }
 
-    if (!name || !type || value === undefined) {
+    const { 
+      markup, 
+      service_charge, 
+      processing_fee, 
+      cancellation_charge 
+    } = req.body;
+
+    // Validate required fields
+    if (!markup || !service_charge || processing_fee === undefined || !cancellation_charge) {
       return res.status(400).json({
         success: false,
-        message: 'Name, type, and value are required'
+        message: 'All configuration fields are required: markup, service_charge, processing_fee, cancellation_charge'
       });
     }
 
-    // Validate type
-    if (!['fixed', 'percentage'].includes(type)) {
+    // Validate markup
+    if (!markup.type || !['percentage', 'fixed'].includes(markup.type) || markup.value === undefined) {
       return res.status(400).json({
         success: false,
-        message: 'Type must be either "fixed" or "percentage"'
+        message: 'Markup must have valid type (percentage/fixed) and value'
       });
     }
 
-    // Validate value based on type
-    if (type === 'percentage' && (value < 0 || value > 100)) {
+    if (markup.type === 'percentage' && (markup.value < 0 || markup.value > 100)) {
       return res.status(400).json({
         success: false,
-        message: 'Percentage value must be between 0 and 100'
+        message: 'Markup percentage value must be between 0 and 100'
       });
     }
 
-    if (type === 'fixed' && value < 0) {
+    if (markup.type === 'fixed' && markup.value < 0) {
       return res.status(400).json({
         success: false,
-        message: 'Fixed value must be greater than or equal to 0'
+        message: 'Markup fixed value must be greater than or equal to 0'
       });
     }
 
-    // Check if markup already exists
-    let markup = await Markup.findOne();
-    
-    if (markup) {
-      // Update existing markup
-      markup.name = name;
-      markup.description = description;
-      markup.type = type;
-      markup.value = value;
-      markup.createdBy = adminId;
-      
-      await markup.save();
-      
-      res.status(200).json({
-        success: true,
-        message: 'Markup updated successfully',
-        data: { markup }
-      });
-    } else {
-      // Create new markup
-      markup = new Markup({
-        name,
-        description,
-        type,
-        value,
-        createdBy: adminId
-      });
-
-      await markup.save();
-
-      res.status(201).json({
-        success: true,
-        message: 'Markup created successfully',
-        data: { markup }
+    // Validate service_charge
+    if (!service_charge.type || !['percentage', 'fixed'].includes(service_charge.type) || service_charge.value === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service charge must have valid type (percentage/fixed) and value'
       });
     }
+
+    if (service_charge.type === 'percentage' && (service_charge.value < 0 || service_charge.value > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service charge percentage value must be between 0 and 100'
+      });
+    }
+
+    if (service_charge.type === 'fixed' && service_charge.value < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service charge fixed value must be greater than or equal to 0'
+      });
+    }
+
+    // Validate processing_fee
+    if (processing_fee < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Processing fee must be greater than or equal to 0'
+      });
+    }
+
+    // Validate cancellation_charge
+    if (!cancellation_charge.type || !['percentage', 'fixed'].includes(cancellation_charge.type) || cancellation_charge.value === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cancellation charge must have valid type (percentage/fixed) and value'
+      });
+    }
+
+    if (cancellation_charge.type === 'percentage' && (cancellation_charge.value < 0 || cancellation_charge.value > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cancellation charge percentage value must be between 0 and 100'
+      });
+    }
+
+    if (cancellation_charge.type === 'fixed' && cancellation_charge.value < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cancellation charge fixed value must be greater than or equal to 0'
+      });
+    }
+
+    // Create or update configuration
+    const configData = {
+      markup,
+      service_charge,
+      processing_fee,
+      cancellation_charge
+    };
+
+    const config = await markupService.updateConfig(configData);
+
+    res.status(200).json({
+      success: true,
+      message: 'Configuration updated successfully',
+      data: { config }
+    });
 
   } catch (error) {
-    console.error('Create markup error:', error);
+    console.error('Create config error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -377,19 +423,35 @@ const createMarkup = async (req, res) => {
   }
 };
 
-// Get global markup
-const getAllMarkups = async (req, res) => {
+// Get current configuration
+const getConfig = async (req, res) => {
   try {
-    const markup = await Markup.findOne()
-      .populate('createdBy', 'name username');
+    const config = await markupService.getConfig();
 
     res.status(200).json({
       success: true,
-      message: markup ? 'Markup retrieved successfully' : 'No markup found',
-      data: {
-        markup,
-        exists: !!markup
-      }
+      message: 'Configuration retrieved successfully',
+      data: { config }
+    });
+
+  } catch (error) {
+    console.error('Get config error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get markup configuration
+const getMarkup = async (req, res) => {
+  try {
+    const markup = await markupService.getMarkup();
+
+    res.status(200).json({
+      success: true,
+      message: 'Markup configuration retrieved successfully',
+      data: { markup }
     });
 
   } catch (error) {
@@ -401,29 +463,147 @@ const getAllMarkups = async (req, res) => {
   }
 };
 
-// Get markup by ID
-const getMarkupById = async (req, res) => {
+// Update configuration (only super admin can update)
+const updateConfig = async (req, res) => {
   try {
-    const { markupId } = req.params;
-
-    const markup = await Markup.findById(markupId)
-      .populate('createdBy', 'name username');
-
-    if (!markup) {
-      return res.status(404).json({
+    // Check if user is super admin
+    if (req.user.type !== 'admin' || req.user.role !== 'super_admin') {
+      return res.status(403).json({
         success: false,
-        message: 'Markup not found'
+        message: 'Access denied. Only super admin can update configuration.'
       });
     }
 
+    const { 
+      markup, 
+      service_charge, 
+      processing_fee, 
+      cancellation_charge 
+    } = req.body;
+
+    // Get current config
+    const currentConfig = await markupService.getConfig();
+    
+    // Update only provided fields
+    const updateData = {};
+    
+    if (markup) {
+      // Validate markup
+      if (markup.type && !['percentage', 'fixed'].includes(markup.type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Markup type must be either "percentage" or "fixed"'
+        });
+      }
+      
+      if (markup.value !== undefined) {
+        const markupType = markup.type || currentConfig.markup.type;
+        if (markupType === 'percentage' && (markup.value < 0 || markup.value > 100)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Markup percentage value must be between 0 and 100'
+          });
+        }
+        
+        if (markupType === 'fixed' && markup.value < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Markup fixed value must be greater than or equal to 0'
+          });
+        }
+      }
+      
+      updateData.markup = {
+        type: markup.type || currentConfig.markup.type,
+        value: markup.value !== undefined ? markup.value : currentConfig.markup.value
+      };
+    }
+
+    if (service_charge) {
+      // Validate service_charge
+      if (service_charge.type && !['percentage', 'fixed'].includes(service_charge.type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Service charge type must be either "percentage" or "fixed"'
+        });
+      }
+      
+      if (service_charge.value !== undefined) {
+        const serviceType = service_charge.type || currentConfig.service_charge.type;
+        if (serviceType === 'percentage' && (service_charge.value < 0 || service_charge.value > 100)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Service charge percentage value must be between 0 and 100'
+          });
+        }
+        
+        if (serviceType === 'fixed' && service_charge.value < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Service charge fixed value must be greater than or equal to 0'
+          });
+        }
+      }
+      
+      updateData.service_charge = {
+        type: service_charge.type || currentConfig.service_charge.type,
+        value: service_charge.value !== undefined ? service_charge.value : currentConfig.service_charge.value
+      };
+    }
+
+    if (processing_fee !== undefined) {
+      if (processing_fee < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Processing fee must be greater than or equal to 0'
+        });
+      }
+      updateData.processing_fee = processing_fee;
+    }
+
+    if (cancellation_charge) {
+      // Validate cancellation_charge
+      if (cancellation_charge.type && !['percentage', 'fixed'].includes(cancellation_charge.type)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cancellation charge type must be either "percentage" or "fixed"'
+        });
+      }
+      
+      if (cancellation_charge.value !== undefined) {
+        const cancelType = cancellation_charge.type || currentConfig.cancellation_charge.type;
+        if (cancelType === 'percentage' && (cancellation_charge.value < 0 || cancellation_charge.value > 100)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cancellation charge percentage value must be between 0 and 100'
+          });
+        }
+        
+        if (cancelType === 'fixed' && cancellation_charge.value < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cancellation charge fixed value must be greater than or equal to 0'
+          });
+        }
+      }
+      
+      updateData.cancellation_charge = {
+        type: cancellation_charge.type || currentConfig.cancellation_charge.type,
+        value: cancellation_charge.value !== undefined ? cancellation_charge.value : currentConfig.cancellation_charge.value
+      };
+    }
+
+    // Update configuration
+    const config = await markupService.updateConfig(updateData);
+
     res.status(200).json({
       success: true,
-      message: 'Markup retrieved successfully',
-      data: { markup }
+      message: 'Configuration updated successfully',
+      data: { config }
     });
 
   } catch (error) {
-    console.error('Get markup by ID error:', error);
+    console.error('Update config error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -431,79 +611,15 @@ const getMarkupById = async (req, res) => {
   }
 };
 
-// Update markup
-const updateMarkup = async (req, res) => {
-  try {
-    const { markupId } = req.params;
-    const { name, description, type, value, isActive } = req.body;
-
-    const markup = await Markup.findById(markupId);
-    if (!markup) {
-      return res.status(404).json({
-        success: false,
-        message: 'Markup not found'
-      });
-    }
-
-    // Validate type if provided
-    if (type && !['fixed', 'percentage'].includes(type)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Type must be either "fixed" or "percentage"'
-      });
-    }
-
-    // Validate value based on type
-    if (value !== undefined) {
-      const markupType = type || markup.type;
-      if (markupType === 'percentage' && (value < 0 || value > 100)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Percentage value must be between 0 and 100'
-        });
-      }
-
-      if (markupType === 'fixed' && value < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Fixed value must be greater than or equal to 0'
-        });
-      }
-    }
-
-    // Update fields
-    if (name !== undefined) markup.name = name;
-    if (description !== undefined) markup.description = description;
-    if (type !== undefined) markup.type = type;
-    if (value !== undefined) markup.value = value;
-    if (isActive !== undefined) markup.isActive = isActive;
-
-    await markup.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Markup updated successfully',
-      data: { markup }
-    });
-
-  } catch (error) {
-    console.error('Update markup error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
-  }
-};
-
-// Delete markup (disabled - global markup cannot be deleted)
-const deleteMarkup = async (req, res) => {
+// Delete configuration (disabled - configuration cannot be deleted)
+const deleteConfig = async (req, res) => {
   try {
     res.status(403).json({
       success: false,
-      message: 'Global markup cannot be deleted. You can only update it.'
+      message: 'Configuration cannot be deleted. You can only update the values.'
     });
   } catch (error) {
-    console.error('Delete markup error:', error);
+    console.error('Delete config error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -511,7 +627,7 @@ const deleteMarkup = async (req, res) => {
   }
 };
 
-// Calculate markup for a given amount
+// Calculate markup for a given amount using global configuration
 const calculateMarkup = async (req, res) => {
   try {
     const { amount } = req.body;
@@ -523,22 +639,22 @@ const calculateMarkup = async (req, res) => {
       });
     }
 
-    // Get the global markup
-    const markup = await Markup.findOne({ isActive: true });
+    // Get the global configuration
+    const config = await markupService.getConfig();
 
-    if (!markup) {
+    if (!config || !config.markup) {
       return res.status(404).json({
         success: false,
-        message: 'No active markup found'
+        message: 'No markup configuration found'
       });
     }
 
     let markupAmount = 0;
     
-    if (markup.type === 'percentage') {
-      markupAmount = (amount * markup.value) / 100;
+    if (config.markup.type === 'percentage') {
+      markupAmount = (amount * config.markup.value) / 100;
     } else {
-      markupAmount = markup.value;
+      markupAmount = config.markup.value;
     }
 
     const finalAmount = amount + markupAmount;
@@ -549,10 +665,8 @@ const calculateMarkup = async (req, res) => {
       data: {
         originalAmount: amount,
         markup: {
-          id: markup._id,
-          name: markup.name,
-          type: markup.type,
-          value: markup.value,
+          type: config.markup.type,
+          value: config.markup.value,
           amount: markupAmount
         },
         finalAmount
@@ -568,6 +682,190 @@ const calculateMarkup = async (req, res) => {
   }
 };
 
+// Update company wallet balance (admin only)
+const updateCompanyWallet = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { amount, action, reason } = req.body; // action: 'add' or 'deduct'
+
+    if (!amount || !action || !['add', 'deduct'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount and action (add/deduct) are required'
+      });
+    }
+
+    if (amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be greater than 0'
+      });
+    }
+
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    // Initialize wallet if it doesn't exist
+    if (!company.wallet) {
+      company.wallet = {
+        balance: 0,
+        currency: 'INR',
+        lastUpdated: new Date()
+      };
+    }
+
+    const oldBalance = company.wallet.balance;
+    let newBalance;
+
+    if (action === 'add') {
+      newBalance = oldBalance + amount;
+    } else {
+      // Check if sufficient balance for deduction
+      if (oldBalance < amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Insufficient wallet balance for deduction',
+          data: {
+            currentBalance: oldBalance,
+            requestedDeduction: amount
+          }
+        });
+      }
+      newBalance = oldBalance - amount;
+    }
+
+    // Update wallet
+    company.wallet.balance = newBalance;
+    company.wallet.lastUpdated = new Date();
+    await company.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Wallet ${action === 'add' ? 'credited' : 'debited'} successfully`,
+      data: {
+        companyId: company._id,
+        companyName: company.name,
+        oldBalance,
+        newBalance,
+        amount,
+        action,
+        reason: reason || 'Admin update',
+        currency: company.wallet.currency,
+        lastUpdated: company.wallet.lastUpdated
+      }
+    });
+
+  } catch (error) {
+    console.error('Update company wallet error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get company wallet balance
+const getCompanyWallet = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    const company = await Company.findById(companyId).select('name wallet');
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
+    }
+
+    // Initialize wallet if it doesn't exist
+    if (!company.wallet) {
+      company.wallet = {
+        balance: 0,
+        currency: 'INR',
+        lastUpdated: new Date()
+      };
+      await company.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Wallet balance retrieved successfully',
+      data: {
+        companyId: company._id,
+        companyName: company.name,
+        wallet: company.wallet
+      }
+    });
+
+  } catch (error) {
+    console.error('Get company wallet error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get all companies with wallet balances
+const getAllCompaniesWithWallets = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status } = req.query;
+    const skip = (page - 1) * limit;
+
+    // Build query
+    const query = {};
+    if (status && ['pending', 'verified', 'deactivated'].includes(status)) {
+      query.status = status;
+    }
+
+    const companies = await Company.find(query)
+      .select('name phone companyNumber status isActive wallet createdAt')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Company.countDocuments(query);
+
+    // Ensure all companies have wallet initialized
+    const companiesWithWallets = companies.map(company => {
+      if (!company.wallet) {
+        company.wallet = {
+          balance: 0,
+          currency: 'INR',
+          lastUpdated: new Date()
+        };
+      }
+      return company;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Companies with wallet balances retrieved successfully',
+      data: {
+        companies: companiesWithWallets,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all companies with wallets error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   ownerLogin,
   getAllCompanies,
@@ -575,10 +873,13 @@ module.exports = {
   verifyCompany,
   getDashboardStats,
   createSuperAdmin,
-  createMarkup,
-  getAllMarkups,
-  getMarkupById,
-  updateMarkup,
-  deleteMarkup,
-  calculateMarkup
+  createConfig,
+  getConfig,
+  getMarkup,
+  updateConfig,
+  deleteConfig,
+  calculateMarkup,
+  updateCompanyWallet,
+  getCompanyWallet,
+  getAllCompaniesWithWallets
 }; 

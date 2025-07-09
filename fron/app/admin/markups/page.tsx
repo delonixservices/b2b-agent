@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Eye, Calculator, Percent } from 'lucide-react';
+import { Plus, Edit, Eye, Calculator, Percent, Settings, CreditCard, AlertTriangle } from 'lucide-react';
 import { 
-  getAllMarkups, 
+  getConfig, 
   getAdminToken, 
-  Markup,
-  MarkupsResponse 
+  Config,
+  ConfigResponse 
 } from '../../services/adminApi';
 
 export default function MarkupsPage() {
-  const [markup, setMarkup] = useState<Markup | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCalculator, setShowCalculator] = useState(false);
@@ -21,19 +21,19 @@ export default function MarkupsPage() {
 
   useEffect(() => {
     if (token) {
-      fetchMarkup();
+      fetchConfig();
     }
   }, [token]);
 
-  const fetchMarkup = async () => {
+  const fetchConfig = async () => {
     try {
       setLoading(true);
-      const response: MarkupsResponse = await getAllMarkups(token!);
-      setMarkup(response.data.markup);
+      const response: ConfigResponse = await getConfig(token!);
+      setConfig(response.data.config);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch markup');
-      console.error('Error fetching markup:', err);
+      setError('Failed to fetch configuration');
+      console.error('Error fetching configuration:', err);
     } finally {
       setLoading(false);
     }
@@ -46,7 +46,7 @@ export default function MarkupsPage() {
     }
 
     try {
-      const response = await fetch('http://localhost:3334/api/owner/markups/calculate', {
+      const response = await fetch('http://localhost:3334/api/owner/config/calculate', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -76,11 +76,11 @@ export default function MarkupsPage() {
     });
   };
 
-  const formatValue = (markup: Markup) => {
-    if (markup.type === 'percentage') {
-      return `${markup.value}%`;
+  const formatValue = (type: 'fixed' | 'percentage', value: number) => {
+    if (type === 'percentage') {
+      return `${value}%`;
     }
-    return `₹${markup.value}`;
+    return `₹${value}`;
   };
 
   if (loading) {
@@ -99,8 +99,8 @@ export default function MarkupsPage() {
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Global Markup</h1>
-          <p className="text-gray-600">Manage the global pricing markup for all hotels</p>
+          <h1 className="text-2xl font-bold text-gray-900">Pricing Configuration</h1>
+          <p className="text-gray-600">Manage global pricing settings for all hotel bookings</p>
         </div>
         <div className="flex space-x-3">
           <button
@@ -110,13 +110,13 @@ export default function MarkupsPage() {
             <Calculator className="w-4 h-4" />
             <span>Calculator</span>
           </button>
-          {!markup && (
+          {!config && (
             <button
               onClick={() => window.location.href = '/admin/markups/create'}
               className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              <span>Create Markup</span>
+              <span>Create Configuration</span>
             </button>
           )}
         </div>
@@ -162,7 +162,7 @@ export default function MarkupsPage() {
               <div className="mt-3">
                 <span className="font-medium text-sm">Markup Details:</span>
                 <div className="mt-2 text-xs text-gray-600">
-                  {calculationResult.markup.name}: {calculationResult.markup.type === 'percentage' ? `${calculationResult.markup.value}%` : `₹${calculationResult.markup.value}`} = ₹{calculationResult.markup.amount}
+                  {calculationResult.markup.type === 'percentage' ? `${calculationResult.markup.value}%` : `₹${calculationResult.markup.value}`} = ₹{calculationResult.markup.amount}
                 </div>
               </div>
             </div>
@@ -177,89 +177,149 @@ export default function MarkupsPage() {
         </div>
       )}
 
-      {/* Markup Display */}
-      {markup ? (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-6">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">{markup.name}</h2>
-                {markup.description && (
-                  <p className="text-gray-600 mt-1">{markup.description}</p>
-                )}
-              </div>
-              <div className="flex space-x-2">
+      {/* Configuration Display */}
+      {config ? (
+        <div className="space-y-6">
+          {/* Markup Configuration */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center space-x-2">
+                  <Percent className="w-5 h-5 text-blue-600" />
+                  <h2 className="text-xl font-semibold text-gray-900">Markup Configuration</h2>
+                </div>
                 <button
-                  onClick={() => window.location.href = `/admin/markups/${markup._id}`}
-                  className="text-blue-600 hover:text-blue-900 p-2"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => window.location.href = `/admin/markups/${markup._id}/edit`}
+                  onClick={() => window.location.href = '/admin/markups/edit'}
                   className="text-indigo-600 hover:text-indigo-900 p-2"
                 >
                   <Edit className="w-4 h-4" />
                 </button>
               </div>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm font-medium text-gray-500">Type</div>
-                <div className="mt-1">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    markup.type === 'percentage' 
-                      ? 'bg-blue-100 text-blue-800' 
-                      : 'bg-green-100 text-green-800'
-                  }`}>
-                    {markup.type}
-                  </span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Type</div>
+                  <div className="mt-1">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      config.markup.type === 'percentage' 
+                        ? 'bg-blue-100 text-blue-800' 
+                        : 'bg-green-100 text-green-800'
+                    }`}>
+                      {config.markup.type}
+                    </span>
+                  </div>
                 </div>
+                
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Value</div>
+                  <div className="mt-1 text-lg font-semibold text-gray-900">
+                    {formatValue(config.markup.type, config.markup.value)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Service Charge Configuration */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center space-x-2 mb-4">
+                <Settings className="w-5 h-5 text-green-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Service Charge Configuration</h2>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Type</div>
+                  <div className="mt-1">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      config.service_charge.type === 'percentage' 
+                        ? 'bg-blue-100 text-blue-800' 
+                        : 'bg-green-100 text-green-800'
+                    }`}>
+                      {config.service_charge.type}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Value</div>
+                  <div className="mt-1 text-lg font-semibold text-gray-900">
+                    {formatValue(config.service_charge.type, config.service_charge.value)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Processing Fee */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center space-x-2 mb-4">
+                <CreditCard className="w-5 h-5 text-purple-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Processing Fee</h2>
               </div>
               
               <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm font-medium text-gray-500">Value</div>
+                <div className="text-sm font-medium text-gray-500">Fixed Amount</div>
                 <div className="mt-1 text-lg font-semibold text-gray-900">
-                  {formatValue(markup)}
+                  ₹{config.processing_fee}
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Cancellation Charge */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center space-x-2 mb-4">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Cancellation Charge</h2>
               </div>
               
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm font-medium text-gray-500">Status</div>
-                <div className="mt-1">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    markup.isActive 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {markup.isActive ? 'Active' : 'Inactive'}
-                  </span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Type</div>
+                  <div className="mt-1">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      config.cancellation_charge.type === 'percentage' 
+                        ? 'bg-blue-100 text-blue-800' 
+                        : 'bg-green-100 text-green-800'
+                    }`}>
+                      {config.cancellation_charge.type}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Value</div>
+                  <div className="mt-1 text-lg font-semibold text-gray-900">
+                    {formatValue(config.cancellation_charge.type, config.cancellation_charge.value)}
+                  </div>
                 </div>
               </div>
             </div>
-            
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="text-sm text-gray-500">
-                Created: {formatDate(markup.createdAt)}
-              </div>
-            </div>
+          </div>
+
+          {/* Last Updated */}
+          <div className="text-center text-sm text-gray-500">
+            Last updated: {formatDate(config.updated_at)}
           </div>
         </div>
       ) : (
         /* Empty State */
         <div className="text-center py-12 bg-white rounded-lg shadow">
           <div className="text-gray-400 mb-4">
-            <Percent className="w-12 h-12 mx-auto" />
+            <Settings className="w-12 h-12 mx-auto" />
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No markup configured</h3>
-          <p className="text-gray-500 mb-4">Create a global markup to apply to all hotel bookings.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No configuration set</h3>
+          <p className="text-gray-500 mb-4">Create a pricing configuration to apply to all hotel bookings.</p>
           <button
             onClick={() => window.location.href = '/admin/markups/create'}
             className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span>Create Markup</span>
+            <span>Create Configuration</span>
           </button>
         </div>
       )}
