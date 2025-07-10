@@ -5,9 +5,10 @@ import dayjs from 'dayjs'
 
 interface SearchSummaryProps {
   totalHotels: number
+  cityFallback?: { used: boolean; city: string }
 }
 
-export default function SearchSummary({ totalHotels }: SearchSummaryProps) {
+export default function SearchSummary({ totalHotels, cityFallback }: SearchSummaryProps) {
   const searchParams = useSearchParams()
 
   return (
@@ -17,6 +18,14 @@ export default function SearchSummary({ totalHotels }: SearchSummaryProps) {
         <span>{totalHotels} hotels found</span>
         <span>•</span>
         <span>{searchParams.get('area') ? JSON.parse(decodeURIComponent(searchParams.get('area')!)).name : ''}</span>
+        {cityFallback?.used && (
+          <>
+            <span>•</span>
+            <span className="text-blue-600 font-medium">
+              Showing hotels in {cityFallback.city} (city fallback)
+            </span>
+          </>
+        )}
         <span>•</span>
         <span>{dayjs(searchParams.get('checkIn')).format('MMM DD')} - {dayjs(searchParams.get('checkOut')).format('MMM DD')}</span>
         <span>•</span>

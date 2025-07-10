@@ -171,11 +171,36 @@ export default function HotelListingPage() {
   // Helper to extract last word from hotel name
   function extractCityFromHotelName(name: string) {
     if (!name) return '';
-    const parts = name.trim().split(/\s+/);
-    return parts[parts.length - 1];
+    
+    // Remove common hotel prefixes/suffixes that might interfere with city extraction
+    const cleanedName = name
+      .replace(/\b(hotel|hotels|inn|resort|palace|tower|plaza|center|centre|lodge|guesthouse|motel)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // Split by spaces and get the last meaningful word
+    const parts = cleanedName.split(/\s+/);
+    
+    // Filter out common words that are not city names
+    const commonWords = ['the', 'and', 'or', 'in', 'at', 'of', 'for', 'with', 'by', 'near', 'close', 'next', 'across', 'from'];
+    const meaningfulParts = parts.filter(part => 
+      part.length > 2 && !commonWords.includes(part.toLowerCase())
+    );
+    
+    if (meaningfulParts.length > 0) {
+      const lastWord = meaningfulParts[meaningfulParts.length - 1];
+      console.log(`📍 Extracted city from "${name}" -> "${lastWord}"`);
+      return lastWord;
+    }
+    
+    // Fallback: return the last word from original name
+    const originalParts = name.trim().split(/\s+/);
+    const fallbackWord = originalParts[originalParts.length - 1];
+    console.log(`📍 Fallback city extraction from "${name}" -> "${fallbackWord}"`);
+    return fallbackWord;
   }
 
-  // Search hotels API call (with city fallback)
+  // Search hotels API call (with parallel city search for hotel/POI types)
   const searchHotels = async (hotelIdsToSearch: string[], isLoadMore: boolean = false) => {
     try {
       setLoading(true)
@@ -204,63 +229,133 @@ export default function HotelListingPage() {
         filters: cleanFilters
       }
       const token = localStorage.getItem('token')
-      const data = await hotelApi.searchHotels(searchPayload, token || undefined)
-      if (data.success && data.data.hotels.length > 0) {
-        // Convert HotelDetails to Hotel
-        const convertedHotels = data.data.hotels.map(convertHotelDetailsToHotel)
+
+      // Check if we should do parallel city search (for hotel or POI types)
+      const shouldDoCitySearch = (params.hotelIds && params.hotelIds.length === 1) || 
+                                params.area.type === 'hotel' || 
+                                params.area.type === 'poi'
+
+      console.log(`📤 Main search payload:`, JSON.stringify(searchPayload, null, 2))
+
+      let citySearchPromise = null
+      let extractedCity = ''
+
+      if (shouldDoCitySearch) {
+        console.log(`🔍 Type is ${params.area.type}, initiating parallel city search...`)
         
-        if (isLoadMore) {
-          setHotels(prev => [...prev, ...convertedHotels])
+        // Extract city name (last word only)
+        extractedCity = extractCityFromHotelName(params.area.name)
+        console.log(`📍 Extracted city for parallel search: "${extractedCity}" from "${params.area.name}"`)
+        
+        if (extractedCity) {
+          const cityPayload = {
+            cityName: extractedCity, // Send only the last word
+            checkindate: params.checkIn,
+            checkoutdate: params.checkOut,
+            details: roomDetails,
+            page: 1,
+            perPage: 50,
+            currentHotelsCount: 0,
+            transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
+            filters: cleanFilters
+          }
+          
+          console.log(`🏙️ Starting parallel city search for: ${extractedCity}`)
+          console.log(`📤 City search payload:`, JSON.stringify(cityPayload, null, 2))
+          citySearchPromise = hotelApi.searchHotelsByCity(cityPayload, token || undefined)
         } else {
-          setHotels(convertedHotels)
+          console.log(`❌ Could not extract city name from: ${params.area.name}`)
         }
-        if (!isLoadMore && data.data.price) {
-          setPriceRange({ min: data.data.price.minPrice, max: data.data.price.maxPrice })
-          setFilters(prev => ({ ...prev, price: { min: data.data.price.minPrice, max: data.data.price.maxPrice } }))
+      }
+
+      // Make both API calls in parallel
+      const promises = [hotelApi.searchHotels(searchPayload, token || undefined)]
+      if (citySearchPromise) {
+        promises.push(citySearchPromise)
+      }
+
+      console.log(`🚀 Making ${promises.length} parallel API calls...`)
+      const results = await Promise.allSettled(promises)
+      
+      // Process main search results
+      const mainSearchResult = results[0]
+      let mainHotels: Hotel[] = []
+      let mainSuccess = false
+      
+      if (mainSearchResult.status === 'fulfilled' && mainSearchResult.value.success && mainSearchResult.value.data.hotels.length > 0) {
+        console.log(`✅ Main search successful! Found ${mainSearchResult.value.data.hotels.length} hotels`)
+        mainHotels = mainSearchResult.value.data.hotels.map(convertHotelDetailsToHotel)
+        mainSuccess = true
+        
+        if (!isLoadMore && mainSearchResult.value.data.price) {
+          setPriceRange({ min: mainSearchResult.value.data.price.minPrice, max: mainSearchResult.value.data.price.maxPrice })
+          setFilters(prev => ({ ...prev, price: { min: mainSearchResult.value.data.price.minPrice, max: mainSearchResult.value.data.price.maxPrice } }))
         }
-        if (data.data.transaction_identifier) {
-          setTransactionIdentifier(data.data.transaction_identifier)
+        if (mainSearchResult.value.data.transaction_identifier) {
+          setTransactionIdentifier(mainSearchResult.value.data.transaction_identifier)
         }
       } else {
-        // Fallback: If single hotel or area.type is 'hotel', try city search
-        if ((params.hotelIds && params.hotelIds.length === 1) || params.area.type === 'hotel') {
-          const hotelName = params.area.name || ''
-          const city = extractCityFromHotelName(hotelName)
-          if (city) {
-            try {
-              const cityPayload = {
-                cityName: city,
-                checkindate: params.checkIn,
-                checkoutdate: params.checkOut,
-                details: roomDetails,
-                page: 1,
-                perPage: 50,
-                currentHotelsCount: 0,
-                transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
-                filters: cleanFilters
-              }
-              const cityData = await hotelApi.searchHotelsByCity(cityPayload, token || undefined)
-              if (cityData.success && cityData.data.hotels.length > 0) {
-                // Convert HotelDetails to Hotel
-                const convertedCityHotels = cityData.data.hotels.map(convertHotelDetailsToHotel)
-                setHotels(convertedCityHotels)
-                setCityFallback({used: true, city})
-                setTotalHotels(cityData.data.hotels.length)
-                if (cityData.data.price) {
-                  setPriceRange({ min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice })
-                  setFilters(prev => ({ ...prev, price: { min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice } }))
-                }
-                return
-              }
-            } catch (cityErr) {
-              // ignore, will show no hotels found
-            }
-          }
+        console.log(`❌ Main search failed or no results`)
+      }
+
+      // Process city search results (if it was made)
+      let cityHotels: Hotel[] = []
+      let citySuccess = false
+      
+      if (citySearchPromise && results[1]) {
+        const citySearchResult = results[1]
+        if (citySearchResult.status === 'fulfilled' && citySearchResult.value.success && citySearchResult.value.data.hotels.length > 0) {
+          console.log(`✅ City search successful! Found ${citySearchResult.value.data.hotels.length} hotels in ${extractedCity}`)
+          cityHotels = citySearchResult.value.data.hotels.map(convertHotelDetailsToHotel)
+          citySuccess = true
+        } else {
+          console.log(`❌ City search failed or no results for ${extractedCity}`)
         }
+      }
+
+      // Combine results based on priority
+      let finalHotels: Hotel[] = []
+      let usedCityFallback = false
+
+      if (mainSuccess) {
+        // If main search succeeded, use those results
+        finalHotels = mainHotels
+        console.log(`🎯 Using main search results (${finalHotels.length} hotels)`)
+      } else if (citySuccess) {
+        // If main search failed but city search succeeded, use city results
+        finalHotels = cityHotels
+        usedCityFallback = true
+        console.log(`🎯 Using city search results (${finalHotels.length} hotels) - city fallback`)
+        
+        // Set city search data
+        const citySearchResult = results[1]
+        if (citySearchResult.status === 'fulfilled' && citySearchResult.value.data.price) {
+          setPriceRange({ min: citySearchResult.value.data.price.minPrice, max: citySearchResult.value.data.price.maxPrice })
+          setFilters(prev => ({ ...prev, price: { min: citySearchResult.value.data.price.minPrice, max: citySearchResult.value.data.price.maxPrice } }))
+        }
+        if (citySearchResult.status === 'fulfilled' && citySearchResult.value.data.transaction_identifier) {
+          setTransactionIdentifier(citySearchResult.value.data.transaction_identifier)
+        }
+      }
+
+      // Update state
+      if (isLoadMore) {
+        setHotels(prev => [...prev, ...finalHotels])
+      } else {
+        setHotels(finalHotels)
+      }
+      
+      if (usedCityFallback) {
+        setCityFallback({used: true, city: extractedCity})
+        setTotalHotels(finalHotels.length)
+      } else if (mainSuccess) {
+        setTotalHotels(finalHotels.length)
+      } else {
         setHotels([])
         setTotalHotels(0)
         setError(null)
       }
+
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Search failed'
       setError(errMsg)
@@ -301,6 +396,17 @@ export default function HotelListingPage() {
     try {
       const params = getSearchParams()
       
+      console.log('🚀 Initializing search with params:', {
+        areaType: params.area.type,
+        areaName: params.area.name,
+        hotelIdsCount: params.hotelIds?.length || 0,
+        checkIn: params.checkIn,
+        checkOut: params.checkOut,
+        rooms: params.rooms,
+        adults: params.adults,
+        children: params.children
+      })
+      
       // Set up hotel ID pagination
       if (params.hotelIds && params.hotelIds.length > 0) {
         console.log(`🏨 Found ${params.hotelIds.length} hotel IDs in URL`)
@@ -324,6 +430,7 @@ export default function HotelListingPage() {
       } else {
         // No hotel IDs - fallback to regular search
         console.log('🔍 No hotel IDs found in URL - performing regular search')
+        console.log(`📍 Area type: ${params.area.type}, Area name: ${params.area.name}`)
         setTotalHotels(0)
         setHasMoreBatches(false)
         await searchHotels([], false)
@@ -405,7 +512,7 @@ export default function HotelListingPage() {
         </div>
         
         {/* Search Summary */}
-        <SearchSummary totalHotels={totalHotels} />
+        <SearchSummary totalHotels={totalHotels} cityFallback={cityFallback} />
 
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Filters Sidebar */}
@@ -426,12 +533,7 @@ export default function HotelListingPage() {
                 <p>Try changing your search criteria or filters.</p>
               </div>
             )}
-            {/* Show city fallback message if used */}
-            {cityFallback.used && hotels.length > 0 && (
-              <div className="text-center text-blue-600 py-4">
-                <h2 className="text-lg font-semibold mb-1">Showing hotels in <span className="font-bold">{cityFallback.city}</span> (city fallback)</h2>
-              </div>
-            )}
+
             <HotelList 
               hotels={getSortedHotels()}
               loading={loading}
