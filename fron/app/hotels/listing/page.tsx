@@ -10,8 +10,70 @@ import HotelFilters from './components/HotelFilters'
 import HotelList from './components/HotelList'
 import SortBar from './components/SortBar'
 import { Hotel, Filters, SearchResponse } from './types/hotel'
-import { hotelApi } from '../../services/hotelApi'
+import { hotelApi, HotelDetails } from '../../services/hotelApi'
 import { splitHotelIdsIntoBatches } from '../../utils/hotelUtils'
+
+// Helper function to convert HotelDetails to Hotel
+const convertHotelDetailsToHotel = (hotelDetails: HotelDetails): Hotel => {
+  return {
+    _id: hotelDetails.id,
+    id: hotelDetails.id,
+    hotelId: hotelDetails.hotelId,
+    name: hotelDetails.name,
+    originalName: hotelDetails.originalName,
+    starRating: hotelDetails.starRating || 0,
+    address: hotelDetails.address,
+    city: hotelDetails.city || '',
+    state: hotelDetails.state,
+    stateProvince: hotelDetails.state,
+    country: hotelDetails.location?.country || '',
+    countryCode: hotelDetails.location?.countryCode,
+    image: hotelDetails.image,
+    imageDetails: hotelDetails.imageDetails ? {
+      images: hotelDetails.imageDetails.images || [],
+      count: hotelDetails.imageDetails.count || 0
+    } : undefined,
+    amenities: hotelDetails.amenities || [],
+    rates: {
+      packages: hotelDetails.rates.packages.map(pkg => ({
+        base_amount: pkg.base_amount || 0,
+        chargeable_rate: pkg.chargeable_rate || 0,
+        markup_amount: pkg.markup_amount || 0,
+        markup_details: pkg.markup_details && pkg.markup_details.id && pkg.markup_details.name && pkg.markup_details.type && pkg.markup_details.value !== undefined ? {
+          id: pkg.markup_details.id,
+          name: pkg.markup_details.name,
+          type: pkg.markup_details.type,
+          value: pkg.markup_details.value
+        } : undefined,
+        room_details: pkg.room_details ? {
+          room_type: pkg.room_details.room_type || '',
+          food: pkg.room_details.food || '',
+          non_refundable: pkg.room_details.non_refundable || false,
+          description: pkg.room_details.description,
+          supplier_description: pkg.room_details.supplier_description
+        } : undefined,
+        service_component: pkg.service_component || 0,
+        gst: pkg.gst,
+        room_rate: pkg.room_rate,
+        chargeable_rate_with_tax_excluded: pkg.chargeable_rate_with_tax_excluded,
+        taxes_and_fees: pkg.taxes_and_fees && pkg.taxes_and_fees.estimated_total && pkg.taxes_and_fees.estimated_total.currency && pkg.taxes_and_fees.estimated_total.value !== undefined ? {
+          estimated_total: {
+            currency: pkg.taxes_and_fees.estimated_total.currency,
+            value: pkg.taxes_and_fees.estimated_total.value
+          }
+        } : undefined
+      }))
+    },
+    description: hotelDetails.moreDetails?.description,
+    location: hotelDetails.location,
+    moreDetails: hotelDetails.moreDetails,
+    policy: hotelDetails.policy,
+    dailyRates: {
+      highest: 0,
+      lowest: 0
+    }
+  }
+}
 
 export default function HotelListingPage() {
   const searchParams = useSearchParams()
@@ -65,7 +127,7 @@ export default function HotelListingPage() {
       extractedHotelIds = JSON.parse(decodeURIComponent(hotelIds))
     } else if (areaData.id && typeof areaData.id === 'string') {
       // If hotel IDs are in area.id as comma-separated string, split them
-      extractedHotelIds = areaData.id.split(',').filter(id => id.trim() !== '')
+      extractedHotelIds = areaData.id.split(',').filter((id: string) => id.trim() !== '')
     }
 
     return {
@@ -142,12 +204,15 @@ export default function HotelListingPage() {
         filters: cleanFilters
       }
       const token = localStorage.getItem('token')
-      const data: SearchResponse = await hotelApi.searchHotels(searchPayload, token || undefined)
+      const data = await hotelApi.searchHotels(searchPayload, token || undefined)
       if (data.success && data.data.hotels.length > 0) {
+        // Convert HotelDetails to Hotel
+        const convertedHotels = data.data.hotels.map(convertHotelDetailsToHotel)
+        
         if (isLoadMore) {
-          setHotels(prev => [...prev, ...data.data.hotels])
+          setHotels(prev => [...prev, ...convertedHotels])
         } else {
-          setHotels(data.data.hotels)
+          setHotels(convertedHotels)
         }
         if (!isLoadMore && data.data.price) {
           setPriceRange({ min: data.data.price.minPrice, max: data.data.price.maxPrice })
@@ -176,11 +241,15 @@ export default function HotelListingPage() {
               }
               const cityData = await hotelApi.searchHotelsByCity(cityPayload, token || undefined)
               if (cityData.success && cityData.data.hotels.length > 0) {
-                setHotels(cityData.data.hotels)
+                // Convert HotelDetails to Hotel
+                const convertedCityHotels = cityData.data.hotels.map(convertHotelDetailsToHotel)
+                setHotels(convertedCityHotels)
                 setCityFallback({used: true, city})
                 setTotalHotels(cityData.data.hotels.length)
-                setPriceRange({ min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice })
-                setFilters(prev => ({ ...prev, price: { min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice } }))
+                if (cityData.data.price) {
+                  setPriceRange({ min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice })
+                  setFilters(prev => ({ ...prev, price: { min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice } }))
+                }
                 return
               }
             } catch (cityErr) {
@@ -288,12 +357,14 @@ export default function HotelListingPage() {
   }
 
   // Helper to get min price
-  function getMinPrice(hotel) {
-    const prices = hotel.rates.packages.map(pkg =>
-      pkg.chargeable_rate > 0 ? pkg.chargeable_rate :
-      pkg.chargeable_rate_with_tax_excluded > 0 ? pkg.chargeable_rate_with_tax_excluded :
-      pkg.room_rate > 0 ? pkg.room_rate : pkg.base_amount
-    ).filter(price => price > 0)
+  function getMinPrice(hotel: Hotel) {
+    const prices = hotel.rates.packages.map(pkg => {
+      if (pkg.chargeable_rate && pkg.chargeable_rate > 0) return pkg.chargeable_rate;
+      if (pkg.chargeable_rate_with_tax_excluded && pkg.chargeable_rate_with_tax_excluded > 0) return pkg.chargeable_rate_with_tax_excluded;
+      if (pkg.room_rate && pkg.room_rate > 0) return pkg.room_rate;
+      if (pkg.base_amount && pkg.base_amount > 0) return pkg.base_amount;
+      return 0;
+    }).filter(price => price > 0)
     return prices.length > 0 ? Math.min(...prices) : 0
   }
 
