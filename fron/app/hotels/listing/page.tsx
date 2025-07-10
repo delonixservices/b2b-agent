@@ -38,6 +38,9 @@ export default function HotelListingPage() {
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0)
   const [hasMoreBatches, setHasMoreBatches] = useState(false)
 
+  // Add state to track if city fallback is used and city name
+  const [cityFallback, setCityFallback] = useState<{used: boolean, city: string}>({used: false, city: ''})
+
   // Extract search parameters from URL
   const getSearchParams = () => {
     const area = searchParams.get('area')
@@ -103,95 +106,97 @@ export default function HotelListingPage() {
     return details
   }
 
-  // Search hotels API call
+  // Helper to extract last word from hotel name
+  function extractCityFromHotelName(name: string) {
+    if (!name) return '';
+    const parts = name.trim().split(/\s+/);
+    return parts[parts.length - 1];
+  }
+
+  // Search hotels API call (with city fallback)
   const searchHotels = async (hotelIdsToSearch: string[], isLoadMore: boolean = false) => {
     try {
       setLoading(true)
+      setCityFallback({used: false, city: ''})
       const params = getSearchParams()
-      
       const roomDetails = buildRoomDetails(params.rooms, params.adults, params.children, params.childrenAges)
-      
-      // Create area object with ONLY the current batch of hotel IDs in area.id
       const areaWithCurrentBatch = {
-        id: hotelIdsToSearch.join(','), // Send only current batch as comma-separated string
+        id: hotelIdsToSearch.join(','),
         type: params.area.type,
         name: params.area.name,
         transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined
       }
-      
-      // Always send price filter with min: 0, max: 0 regardless of user selection
       const cleanFilters = { 
         ...filters,
         price: { min: 0, max: 0 }
       }
-      
-      // Search payload with hotel IDs in area.id field
       const searchPayload = {
         details: roomDetails,
         area: areaWithCurrentBatch,
         checkindate: params.checkIn,
         checkoutdate: params.checkOut,
-        page: 1, // Always use page 1 since we're handling pagination via hotel IDs
+        page: 1,
         perPage: 50,
-        currentHotelsCount: 0, // Always send 0
+        currentHotelsCount: 0,
         transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
         filters: cleanFilters
       }
-
-      console.log(`🔍 Searching for ${hotelIdsToSearch.length} hotel IDs in area.id:`, hotelIdsToSearch.join(','))
-      console.log('📤 Search payload:', JSON.stringify(searchPayload, null, 2))
-
-      // Get authentication token from localStorage
       const token = localStorage.getItem('token')
-      
       const data: SearchResponse = await hotelApi.searchHotels(searchPayload, token || undefined)
-      
-      if (data.success) {
-        console.log(`✅ Search successful - received ${data.data.hotels.length} hotels`)
-        
+      if (data.success && data.data.hotels.length > 0) {
         if (isLoadMore) {
-          // Load more - append hotels
           setHotels(prev => [...prev, ...data.data.hotels])
-          console.log(`📈 Appended ${data.data.hotels.length} hotels. Total now: ${hotels.length + data.data.hotels.length}`)
         } else {
-          // Initial load - replace hotels
           setHotels(data.data.hotels)
-          console.log(`📊 Initial load complete - ${data.data.hotels.length} hotels loaded`)
         }
-        
-        // Update price range on initial load
         if (!isLoadMore && data.data.price) {
-          setPriceRange({
-            min: data.data.price.minPrice,
-            max: data.data.price.maxPrice
-          })
-          setFilters(prev => ({
-            ...prev,
-            price: { min: data.data.price.minPrice, max: data.data.price.maxPrice }
-          }))
+          setPriceRange({ min: data.data.price.minPrice, max: data.data.price.maxPrice })
+          setFilters(prev => ({ ...prev, price: { min: data.data.price.minPrice, max: data.data.price.maxPrice } }))
         }
-        
         if (data.data.transaction_identifier) {
           setTransactionIdentifier(data.data.transaction_identifier)
-          console.log('Setting transaction_identifier from search response:', data.data.transaction_identifier)
         }
       } else {
-        throw new Error(data.message || 'Search failed')
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Search failed'
-      // If backend says "No hotels found", treat as empty result, not error
-      if (errMsg.toLowerCase().includes('no hotels found')) {
+        // Fallback: If single hotel or area.type is 'hotel', try city search
+        if ((params.hotelIds && params.hotelIds.length === 1) || params.area.type === 'hotel') {
+          const hotelName = params.area.name || ''
+          const city = extractCityFromHotelName(hotelName)
+          if (city) {
+            try {
+              const cityPayload = {
+                cityName: city,
+                checkindate: params.checkIn,
+                checkoutdate: params.checkOut,
+                details: roomDetails,
+                page: 1,
+                perPage: 50,
+                currentHotelsCount: 0,
+                transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
+                filters: cleanFilters
+              }
+              const cityData = await hotelApi.searchHotelsByCity(cityPayload, token || undefined)
+              if (cityData.success && cityData.data.hotels.length > 0) {
+                setHotels(cityData.data.hotels)
+                setCityFallback({used: true, city})
+                setTotalHotels(cityData.data.hotels.length)
+                setPriceRange({ min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice })
+                setFilters(prev => ({ ...prev, price: { min: cityData.data.price.minPrice, max: cityData.data.price.maxPrice } }))
+                return
+              }
+            } catch (cityErr) {
+              // ignore, will show no hotels found
+            }
+          }
+        }
         setHotels([])
         setTotalHotels(0)
         setError(null)
-      } else {
-        setError(errMsg)
       }
-      // Handle 401 errors specifically
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Search failed'
+      setError(errMsg)
       if (err instanceof Error && err.message.includes('401')) {
         console.error('Authentication required for hotel search')
-        // You can add a toast notification or redirect to login here
       }
     } finally {
       setLoading(false)
@@ -348,6 +353,12 @@ export default function HotelListingPage() {
               <div className="text-center text-gray-500 py-12">
                 <h2 className="text-xl font-semibold mb-2">No hotels found</h2>
                 <p>Try changing your search criteria or filters.</p>
+              </div>
+            )}
+            {/* Show city fallback message if used */}
+            {cityFallback.used && hotels.length > 0 && (
+              <div className="text-center text-blue-600 py-4">
+                <h2 className="text-lg font-semibold mb-1">Showing hotels in <span className="font-bold">{cityFallback.city}</span> (city fallback)</h2>
               </div>
             )}
             <HotelList 
