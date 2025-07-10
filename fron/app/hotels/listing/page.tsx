@@ -11,6 +11,7 @@ import HotelList from './components/HotelList'
 import SortBar from './components/SortBar'
 import { Hotel, Filters, SearchResponse } from './types/hotel'
 import { hotelApi } from '../../services/hotelApi'
+import { splitHotelIdsIntoBatches } from '../../utils/hotelUtils'
 
 export default function HotelListingPage() {
   const searchParams = useSearchParams()
@@ -27,12 +28,15 @@ export default function HotelListingPage() {
     price: { min: 0, max: 0 }
   })
   const [priceRange, setPriceRange] = useState({ min: 0, max: 10000 })
-  const [currentPage, setCurrentPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(0)
   const [totalHotels, setTotalHotels] = useState(0)
-  const [pollingStatus, setPollingStatus] = useState('in-progress')
   const [transactionIdentifier, setTransactionIdentifier] = useState('')
   const [sort, setSort] = useState('popular')
+  
+  // Hotel ID pagination state
+  const [allHotelIds, setAllHotelIds] = useState<string[]>([])
+  const [hotelIdBatches, setHotelIdBatches] = useState<string[][]>([])
+  const [currentBatchIndex, setCurrentBatchIndex] = useState(0)
+  const [hasMoreBatches, setHasMoreBatches] = useState(false)
 
   // Extract search parameters from URL
   const getSearchParams = () => {
@@ -43,19 +47,33 @@ export default function HotelListingPage() {
     const adults = searchParams.get('adults')
     const children = searchParams.get('children')
     const childrenAges = searchParams.get('childrenAges')
+    const hotelIds = searchParams.get('hotelIds')
 
     if (!area || !checkIn || !checkOut || !rooms || !adults) {
       throw new Error('Missing required search parameters')
     }
 
+    const areaData = JSON.parse(decodeURIComponent(area))
+    
+    // Extract hotel IDs from area.id if they exist
+    let extractedHotelIds: string[] = []
+    if (hotelIds) {
+      // If hotelIds parameter exists, use it
+      extractedHotelIds = JSON.parse(decodeURIComponent(hotelIds))
+    } else if (areaData.id && typeof areaData.id === 'string') {
+      // If hotel IDs are in area.id as comma-separated string, split them
+      extractedHotelIds = areaData.id.split(',').filter(id => id.trim() !== '')
+    }
+
     return {
-      area: JSON.parse(decodeURIComponent(area)),
+      area: areaData,
       checkIn,
       checkOut,
       rooms: parseInt(rooms),
       adults: parseInt(adults),
       children: children ? parseInt(children) : 0,
-      childrenAges: childrenAges ? JSON.parse(decodeURIComponent(childrenAges)) : []
+      childrenAges: childrenAges ? JSON.parse(decodeURIComponent(childrenAges)) : [],
+      hotelIds: extractedHotelIds
     }
   }
 
@@ -86,30 +104,42 @@ export default function HotelListingPage() {
   }
 
   // Search hotels API call
-  const searchHotels = async (page: number = 1, currentHotelsCount: number = 0) => {
+  const searchHotels = async (hotelIdsToSearch: string[], isLoadMore: boolean = false) => {
     try {
       setLoading(true)
       const params = getSearchParams()
       
       const roomDetails = buildRoomDetails(params.rooms, params.adults, params.children, params.childrenAges)
       
+      // Create area object with ONLY the current batch of hotel IDs in area.id
+      const areaWithCurrentBatch = {
+        id: hotelIdsToSearch.join(','), // Send only current batch as comma-separated string
+        type: params.area.type,
+        name: params.area.name,
+        transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined
+      }
+      
+      // Always send price filter with min: 0, max: 0 regardless of user selection
+      const cleanFilters = { 
+        ...filters,
+        price: { min: 0, max: 0 }
+      }
+      
+      // Search payload with hotel IDs in area.id field
       const searchPayload = {
         details: roomDetails,
-        area: {
-          ...params.area,
-          transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined
-        },
+        area: areaWithCurrentBatch,
         checkindate: params.checkIn,
         checkoutdate: params.checkOut,
-        page,
-        perPage: 50, // Increased to show all 50 hotels
-        currentHotelsCount,
+        page: 1, // Always use page 1 since we're handling pagination via hotel IDs
+        perPage: 50,
+        currentHotelsCount: 0, // Always send 0
         transaction_identifier: params.area.transaction_identifier || transactionIdentifier || undefined,
-        filters
+        filters: cleanFilters
       }
 
-      console.log('Search payload:', JSON.stringify(searchPayload, null, 2))
-      console.log('Room details structure:', JSON.stringify(roomDetails, null, 2))
+      console.log(`🔍 Searching for ${hotelIdsToSearch.length} hotel IDs in area.id:`, hotelIdsToSearch.join(','))
+      console.log('📤 Search payload:', JSON.stringify(searchPayload, null, 2))
 
       // Get authentication token from localStorage
       const token = localStorage.getItem('token')
@@ -117,41 +147,39 @@ export default function HotelListingPage() {
       const data: SearchResponse = await hotelApi.searchHotels(searchPayload, token || undefined)
       
       if (data.success) {
-        if (page === 1) {
-          setHotels(data.data.hotels)
-          if (data.data.price) {
-            setPriceRange({
-              min: data.data.price.minPrice,
-              max: data.data.price.maxPrice
-            })
-            setFilters(prev => ({
-              ...prev,
-              price: { min: data.data.price.minPrice, max: data.data.price.maxPrice }
-            }))
-          }
-        } else {
+        console.log(`✅ Search successful - received ${data.data.hotels.length} hotels`)
+        
+        if (isLoadMore) {
+          // Load more - append hotels
           setHotels(prev => [...prev, ...data.data.hotels])
+          console.log(`📈 Appended ${data.data.hotels.length} hotels. Total now: ${hotels.length + data.data.hotels.length}`)
+        } else {
+          // Initial load - replace hotels
+          setHotels(data.data.hotels)
+          console.log(`📊 Initial load complete - ${data.data.hotels.length} hotels loaded`)
         }
         
-        if (data.data.pagination) {
-          setTotalPages(data.data.pagination.totalPages)
-          setTotalHotels(data.data.pagination.totalHotelsCount)
-          setPollingStatus(data.data.pagination.pollingStatus)
-        } else {
-          setTotalHotels(data.data.hotels.length)
-          setPollingStatus('complete')
+        // Update price range on initial load
+        if (!isLoadMore && data.data.price) {
+          setPriceRange({
+            min: data.data.price.minPrice,
+            max: data.data.price.maxPrice
+          })
+          setFilters(prev => ({
+            ...prev,
+            price: { min: data.data.price.minPrice, max: data.data.price.maxPrice }
+          }))
         }
         
         if (data.data.transaction_identifier) {
           setTransactionIdentifier(data.data.transaction_identifier)
           console.log('Setting transaction_identifier from search response:', data.data.transaction_identifier)
         }
-        setCurrentPage(page)
       } else {
         throw new Error(data.message || 'Search failed')
       }
     } catch (err) {
-      console.error('Search error:', err)
+      console.error('❌ Search error:', err)
       setError(err instanceof Error ? err.message : 'Search failed')
       // Handle 401 errors specifically
       if (err instanceof Error && err.message.includes('401')) {
@@ -163,10 +191,65 @@ export default function HotelListingPage() {
     }
   }
 
-  // Load more hotels (pagination)
+  // Load more hotels (next batch)
   const loadMoreHotels = () => {
-    if (pollingStatus === 'in-progress' && !loading) {
-      searchHotels(currentPage + 1, hotels.length)
+    if (loading || !hasMoreBatches) return
+    
+    const nextBatchIndex = currentBatchIndex + 1
+    if (nextBatchIndex < hotelIdBatches.length) {
+      const nextBatch = hotelIdBatches[nextBatchIndex]
+      console.log(`🔄 Loading batch ${nextBatchIndex + 1} of ${hotelIdBatches.length}:`, nextBatch)
+      console.log(`📊 Batch contains ${nextBatch.length} hotel IDs`)
+      setCurrentBatchIndex(nextBatchIndex)
+      
+      // Check if this is the last batch
+      if (nextBatchIndex === hotelIdBatches.length - 1) {
+        setHasMoreBatches(false)
+        console.log('⚠️ This is the final batch - no more batches available')
+      }
+      
+      searchHotels(nextBatch, true)
+    } else {
+      console.log('✅ All batches have been loaded')
+      setHasMoreBatches(false)
+    }
+  }
+
+  // Initialize search and pagination
+  const initializeSearch = async () => {
+    try {
+      const params = getSearchParams()
+      
+      // Set up hotel ID pagination
+      if (params.hotelIds && params.hotelIds.length > 0) {
+        console.log(`🏨 Found ${params.hotelIds.length} hotel IDs in URL`)
+        setAllHotelIds(params.hotelIds)
+        setTotalHotels(params.hotelIds.length)
+        
+        // Split hotel IDs into batches of 50
+        const batches = splitHotelIdsIntoBatches(params.hotelIds, 50)
+        console.log(`📦 Split into ${batches.length} batches of 50 hotels each:`, batches.map(batch => batch.length))
+        setHotelIdBatches(batches)
+        setCurrentBatchIndex(0)
+        setHasMoreBatches(batches.length > 1)
+        
+        // Load first batch only
+        if (batches.length > 0) {
+          const firstBatch = batches[0]
+          console.log(`🚀 Loading initial batch 1 of ${batches.length}:`, firstBatch)
+          console.log(`📊 First batch contains ${firstBatch.length} hotel IDs`)
+          await searchHotels(firstBatch, false)
+        }
+      } else {
+        // No hotel IDs - fallback to regular search
+        console.log('🔍 No hotel IDs found in URL - performing regular search')
+        setTotalHotels(0)
+        setHasMoreBatches(false)
+        await searchHotels([], false)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid search parameters')
+      setLoading(false)
     }
   }
 
@@ -174,9 +257,9 @@ export default function HotelListingPage() {
   const applyFilters = (newFilters: Partial<Filters>) => {
     const updatedFilters = { ...filters, ...newFilters }
     setFilters(updatedFilters)
-    setCurrentPage(1)
     setHotels([])
-    searchHotels(1, 0)
+    setCurrentBatchIndex(0)
+    initializeSearch()
   }
 
   // Sort hotels client-side for now
@@ -204,12 +287,7 @@ export default function HotelListingPage() {
 
   // Initialize search on component mount
   useEffect(() => {
-    try {
-      searchHotels()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid search parameters')
-      setLoading(false)
-    }
+    initializeSearch()
   }, [])
 
   if (error) {
@@ -261,10 +339,12 @@ export default function HotelListingPage() {
             <HotelList 
               hotels={getSortedHotels()}
               loading={loading}
-              pollingStatus={pollingStatus}
+              pollingStatus={hasMoreBatches ? 'in-progress' : 'complete'}
               totalHotels={totalHotels}
               onLoadMore={loadMoreHotels}
               transactionIdentifier={transactionIdentifier}
+              loadedBatches={currentBatchIndex + 1}
+              totalBatches={hotelIdBatches.length}
             />
           </div>
         </div>

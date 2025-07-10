@@ -532,4 +532,156 @@ export interface UpdateWalletResponse {
     currency: string;
     lastUpdated: string;
   };
-} 
+}
+
+// Markup Management Interfaces
+export interface Markup {
+  _id: string;
+  name: string;
+  description?: string;
+  type: 'fixed' | 'percentage';
+  value: number;
+  isActive: boolean;
+  hotelId: string;
+  createdBy: {
+    _id: string;
+    name: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarkupResponse {
+  success: boolean;
+  message: string;
+  data: {
+    markup: Markup;
+  };
+}
+
+export interface MarkupsResponse {
+  success: boolean;
+  message: string;
+  data: {
+    markups: Markup[];
+    pagination: {
+      currentPage: number;
+      totalPages: number;
+      totalMarkups: number;
+    };
+  };
+}
+
+// Get Markup by ID
+export const getMarkupById = async (token: string, markupId: string): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch markup details');
+  }
+
+  return response.json();
+};
+
+// Update Markup
+export const updateMarkup = async (
+  token: string,
+  markupId: string,
+  markupData: {
+    name: string;
+    description?: string;
+    type: 'fixed' | 'percentage';
+    value: number;
+    isActive: boolean;
+  }
+): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(markupData),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to update markup');
+  }
+
+  return response.json();
+};
+
+// Delete Markup
+export const deleteMarkup = async (token: string, markupId: string): Promise<{ success: boolean; message: string }> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups/${markupId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to delete markup');
+  }
+
+  return response.json();
+};
+
+// Get All Markups
+export const getAllMarkups = async (
+  token: string,
+  page: number = 1,
+  limit: number = 10
+): Promise<MarkupsResponse> => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString(),
+  });
+
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups?${params}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch markups');
+  }
+
+  return response.json();
+};
+
+// Create Markup
+export const createMarkup = async (
+  token: string,
+  markupData: {
+    name: string;
+    description?: string;
+    type: 'fixed' | 'percentage';
+    value: number;
+    isActive: boolean;
+    hotelId: string;
+  }
+): Promise<MarkupResponse> => {
+  const response = await fetch(`${API_BASE_URL}/api/owner/markups`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(markupData),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to create markup');
+  }
+
+  return response.json();
+}; 

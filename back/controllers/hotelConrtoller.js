@@ -97,7 +97,7 @@ const applyOwnerMarkup = async (hotelPackage) => {
  */
 const validateSearchRequest = (req) => {
   const errors = [];
-  const { details, area, checkindate, checkoutdate, page, perPage, currentHotelsCount } = req.body;
+  const { details, area, checkindate, checkoutdate, page, perPage, currentHotelsCount, hotelIds } = req.body;
 
   // Validate required fields
   if (!details || !Array.isArray(details) || details.length === 0) {
@@ -145,13 +145,25 @@ const validateSearchRequest = (req) => {
     errors.push('Current hotels count cannot be negative');
   }
 
+  // Validate hotelIds if provided
+  if (hotelIds && !Array.isArray(hotelIds)) {
+    errors.push('Hotel IDs must be an array');
+  }
+  
+  // hotelIds can be undefined (regular search) or an empty array (also regular search)
+  // Only validate if it's provided and not an array
+  if (hotelIds !== undefined && !Array.isArray(hotelIds)) {
+    errors.push('Hotel IDs must be an array');
+  }
+
   return {
     isValid: errors.length === 0,
     errors,
     validatedData: {
       page: pageNum,
       perPage: perPageNum,
-      currentHotelsCount: currentCount
+      currentHotelsCount: currentCount,
+      hotelIds: hotelIds || []
     }
   };
 };
@@ -635,70 +647,138 @@ exports.suggest = async (req, res, next) => {
       responseData = parsedData;
     } else {
       console.log('No valid cached data, making external API call...');
-      console.log('API request payload:', JSON.stringify({
+      
+      // Prepare API request payload
+      const apiPayload = {
         "autosuggest": {
           "query": term,
           "locale": "en-US"
         }
+      };
+      
+      console.log('=== EXTERNAL API REQUEST DETAILS ===');
+      console.log('API Endpoint: /autosuggest');
+      console.log('Request Method: POST');
+      console.log('Request Timestamp:', new Date().toISOString());
+      console.log('Request Payload:', JSON.stringify(apiPayload, null, 2));
+      console.log('Request Headers:', JSON.stringify({
+        'Content-Type': 'application/json',
+        'User-Agent': 'B2B-Agent/1.0',
+        'Request-ID': `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       }, null, 2));
+      console.log('Timeout Setting: 100000ms (100 seconds)');
+      console.log('=== END EXTERNAL API REQUEST DETAILS ===');
       
       const apiStartTime = Date.now();
       console.log('Making API call to /autosuggest at:', new Date().toISOString());
       
       const data = await withTimeout(
-        Api.post("/autosuggest", {
-          "autosuggest": {
-            "query": term,
-            "locale": "en-US"
-          }
-        }),
-        100000, // 25 second timeout for API call
+        Api.post("/autosuggest", apiPayload),
+        100000, // 100 second timeout for API call
         'External API call'
       );
       
       const apiEndTime = Date.now();
-      console.log('API call completed in:', apiEndTime - apiStartTime, 'ms');
-      console.log('API response received at:', new Date().toISOString());
-      console.log('API response structure:', Object.keys(data || {}));
+      const apiDuration = apiEndTime - apiStartTime;
+      
+      console.log('=== EXTERNAL API RESPONSE DETAILS ===');
+      console.log('API Call Duration:', apiDuration, 'ms');
+      console.log('API Response Timestamp:', new Date().toISOString());
+      console.log('API Response Status: Success');
+      console.log('API Response Type:', typeof data);
+      console.log('API Response Structure:', Object.keys(data || {}));
+      console.log('API Response Data Keys:', data && data.data ? Object.keys(data.data) : 'No data.data');
+      console.log('API Response Full Data:', JSON.stringify(data, null, 2));
+      console.log('=== END EXTERNAL API RESPONSE DETAILS ===');
 
       if (data && data.data) {
+        console.log('=== API RESPONSE DATA PROCESSING ===');
         console.log('Processing API response data...');
         console.log('Available data types:', Object.keys(data.data));
+        console.log('Transaction Identifier:', data.transaction_identifier);
+        
+        let cityCount = 0;
+        let hotelCount = 0;
+        let poiCount = 0;
         
         // list of cities auto suggest
         if (data.data.city) {
-          console.log('Processing city data, results count:', data.data.city.results ? data.data.city.results.length : 0);
-          data.data.city.results.map((item, _index) => {
-            item.transaction_identifier = data.transaction_identifier;
-            item.displayName = `${item.name} | (${item.hotelCount})`;
-            // Limit region IDs to maximum 50 to avoid Spring Boot backend issues
-            item.id = limitRegionIds(item.id, 50);
-            responseData.push(item);
-          })
+          const cityResults = data.data.city.results || [];
+          cityCount = cityResults.length;
+          console.log('Processing city data, results count:', cityCount);
+          console.log('City data sample:', cityResults.length > 0 ? JSON.stringify(cityResults[0], null, 2) : 'No city data');
+          
+          cityResults.forEach((item, index) => {
+            // Create a complete city object with all original data from Java backend
+            const cityItem = {
+              // Preserve all original fields from Java backend
+              ...item,
+              // Add additional fields for frontend compatibility
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name} | (${item.hotelCount})`,
+              type: 'city', // Add type identifier for frontend
+              // Limit region IDs to maximum 50 to avoid Spring Boot backend issues
+              id: limitRegionIds(item.id, 500)
+            };
+            
+            // Log if region IDs were limited
+            if (item.id !== cityItem.id) {
+              console.log(`City ${index + 1}: Region IDs limited from ${item.id} to ${cityItem.id}`);
+            }
+            
+            // Log full city data for debugging
+            console.log(`City ${index + 1} full data:`, JSON.stringify(cityItem, null, 2));
+            
+            responseData.push(cityItem);
+          });
+          console.log('City processing completed, added items:', cityCount);
         }
 
         // list of hotels auto suggest
         if (data.data.hotel) {
-          console.log('Processing hotel data, results count:', data.data.hotel.results ? data.data.hotel.results.length : 0);
-          data.data.hotel.results.map((item, _index) => {
-            // console.log(item);
-            item.transaction_identifier = data.data.transaction_identifier;
-            item.displayName = `${item.name}`;
-            responseData.push(item);
-          })
+          const hotelResults = data.data.hotel.results || [];
+          hotelCount = hotelResults.length;
+          console.log('Processing hotel data, results count:', hotelCount);
+          console.log('Hotel data sample:', hotelResults.length > 0 ? JSON.stringify(hotelResults[0], null, 2) : 'No hotel data');
+          
+          hotelResults.forEach((item, index) => {
+            // Create a complete hotel object with all original data from Java backend
+            const hotelItem = {
+              // Preserve all original fields from Java backend
+              ...item,
+              // Add additional fields for frontend compatibility
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name}`,
+              type: 'hotel' // Add type identifier for frontend
+            };
+            
+            // Log full hotel data for debugging
+            console.log(`Hotel ${index + 1} full data:`, JSON.stringify(hotelItem, null, 2));
+            
+            responseData.push(hotelItem);
+          });
+          console.log('Hotel processing completed, added items:', hotelCount);
         }
 
         // list of poi auto suggest
         if (data.data.poi) {
-          console.log('Processing POI data, results count:', data.data.poi.results ? data.data.poi.results.length : 0);
-          data.data.poi.results.map((item, _index) => {
+          const poiResults = data.data.poi.results || [];
+          poiCount = poiResults.length;
+          console.log('Processing POI data, results count:', poiCount);
+          console.log('POI data sample:', poiResults.length > 0 ? JSON.stringify(poiResults[0], null, 2) : 'No POI data');
+          
+          poiResults.forEach((item, index) => {
             item.transaction_identifier = data.data.transaction_identifier;
             item.displayName = `${item.name} | (${item.hotelCount})`;
             responseData.push(item);
-          })
+          });
+          console.log('POI processing completed, added items:', poiCount);
         }
 
+        console.log('=== DATA PROCESSING SUMMARY ===');
         console.log('Total processed items:', responseData.length);
+        console.log('Breakdown - Cities:', cityCount, 'Hotels:', hotelCount, 'POIs:', poiCount);
+        console.log('=== END API RESPONSE DATA PROCESSING ===');
 
         // cache the response data
         if (responseData && responseData.length > 0 && client && client.isOpen) {
@@ -731,16 +811,45 @@ exports.suggest = async (req, res, next) => {
 
   } catch (err) {
     console.error('=== ERROR IN SUGGEST FUNCTION ===');
-    console.error('Error details:', {
-      message: err.message,
-      stack: err.stack,
-      code: err.code,
-      response: err.response ? {
-        status: err.response.status,
-        statusText: err.response.statusText,
-        data: err.response.data
-      } : null
-    });
+    console.error('Error Timestamp:', new Date().toISOString());
+    console.error('Error Type:', err.constructor.name);
+    console.error('Error Message:', err.message);
+    console.error('Error Stack:', err.stack);
+    console.error('Error Code:', err.code);
+    console.error('Error Name:', err.name);
+    
+    // Enhanced API error logging
+    if (err.response) {
+      console.error('=== EXTERNAL API ERROR RESPONSE DETAILS ===');
+      console.error('API Response Status:', err.response.status);
+      console.error('API Response Status Text:', err.response.statusText);
+      console.error('API Response Headers:', JSON.stringify(err.response.headers, null, 2));
+      console.error('API Response Data:', JSON.stringify(err.response.data, null, 2));
+      console.error('API Response URL:', err.response.config?.url);
+      console.error('API Response Method:', err.response.config?.method);
+      console.error('API Response Timeout:', err.response.config?.timeout);
+      console.error('API Request Headers:', JSON.stringify(err.response.config?.headers, null, 2));
+      console.error('API Request Data:', JSON.stringify(err.response.config?.data, null, 2));
+      console.error('=== END EXTERNAL API ERROR RESPONSE DETAILS ===');
+    }
+    
+    // Network error details
+    if (err.code) {
+      console.error('=== NETWORK ERROR DETAILS ===');
+      console.error('Network Error Code:', err.code);
+      console.error('Network Error Address:', err.address);
+      console.error('Network Error Port:', err.port);
+      console.error('Network Error Syscall:', err.syscall);
+      console.error('=== END NETWORK ERROR DETAILS ===');
+    }
+    
+    // Timeout error details
+    if (err.message && err.message.includes('timeout')) {
+      console.error('=== TIMEOUT ERROR DETAILS ===');
+      console.error('Timeout Operation:', err.message.includes('External API call') ? 'External API call' : 'Unknown');
+      console.error('Timeout Duration:', err.message.match(/\d+/)?.[0] || 'Unknown');
+      console.error('=== END TIMEOUT ERROR DETAILS ===');
+    }
 
     // delete redis cache
     if (client && client.isOpen) {
@@ -2105,8 +2214,16 @@ exports.searchHotels = async (req, res, next) => {
       });
     }
 
-    const { page, perPage, currentHotelsCount } = validation.validatedData;
+    const { page, perPage, currentHotelsCount, hotelIds } = validation.validatedData;
     const { details, area, checkindate, checkoutdate, transaction_identifier, filters = {} } = req.body;
+
+    console.log('Hotel IDs validation:', {
+      hotelIds,
+      hotelIdsType: typeof hotelIds,
+      isArray: Array.isArray(hotelIds),
+      length: hotelIds ? hotelIds.length : 'undefined',
+      reqBodyHotelIds: req.body.hotelIds
+    });
 
     console.log('Validated parameters:', { page, perPage, currentHotelsCount });
 
@@ -2132,6 +2249,12 @@ exports.searchHotels = async (req, res, next) => {
         details: roomInfo.details
       }
     };
+
+    // Add hotel IDs if provided for specific hotel search
+    if (hotelIds && Array.isArray(hotelIds) && hotelIds.length > 0) {
+      searchObj.search.hotel_id_list = hotelIds;
+      console.log('Searching for specific hotels:', hotelIds);
+    }
 
     if (transaction_identifier && transaction_identifier !== "undefined") {
       searchObj.search.transaction_identifier = transaction_identifier;
@@ -2219,8 +2342,17 @@ exports.searchHotels = async (req, res, next) => {
     const hotelsList = [...data.data.hotels];
     console.log(`Total hotels received: ${hotelsList.length}`);
 
+    // If hotel IDs are provided, use them for pagination calculation
+    let totalHotelsForPagination = hotelsList.length;
+    if (hotelIds && Array.isArray(hotelIds) && hotelIds.length > 0) {
+      // For hotel ID-based search, use the total number of hotel IDs
+      // This allows proper pagination across multiple API calls
+      totalHotelsForPagination = hotelIds.length;
+      console.log(`Using hotel IDs for pagination. Total IDs: ${totalHotelsForPagination}`);
+    }
+
     // Calculate pagination
-    const pagination = calculatePagination(hotelsList.length, page, perPage, currentHotelsCount);
+    const pagination = calculatePagination(totalHotelsForPagination, page, perPage, currentHotelsCount);
     
     if (page > pagination.totalPages) {
       return res.status(422).json({
@@ -2337,8 +2469,8 @@ exports.searchHotels = async (req, res, next) => {
     
     const finalPagination = {
       currentHotelsCount: actualCurrentHotelsCount,
-      totalHotelsCount: hotelsList.length, // Keep original total for pagination
-      totalPages: Math.ceil(hotelsList.length / perPage),
+      totalHotelsCount: totalHotelsForPagination, // Use the correct total for pagination
+      totalPages: Math.ceil(totalHotelsForPagination / perPage),
       pollingStatus: pagination.pollingStatus,
       page,
       perPage

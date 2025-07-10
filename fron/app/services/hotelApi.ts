@@ -112,6 +112,7 @@ export interface SearchRequest {
   perPage?: number;
   currentHotelsCount?: number;
   transaction_identifier?: string;
+  hotelIds?: string[] | undefined; // Add hotel IDs for specific hotel search (optional)
   filters?: {
     roomType?: string[];
     foodType?: string[];
