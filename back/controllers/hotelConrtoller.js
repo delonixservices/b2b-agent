@@ -2510,4 +2510,935 @@ exports.searchHotels = async (req, res, next) => {
     });
   }
 };
+
+exports.getHotelId = async (req, res, next) => {
+  console.log('=== GET HOTEL ID FUNCTION START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  
+  const startTime = Date.now();
+
+  try {
+    const { hotelName } = req.body;
+    
+    if (!hotelName || typeof hotelName !== 'string' || hotelName.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Hotel name is required and must be a non-empty string'
+      });
+    }
+
+    console.log('Processing hotel name:', hotelName);
+
+    // Extract city name from hotel name (after the last comma)
+    const extractCityFromHotelName = (hotelName) => {
+      const parts = hotelName.split(',');
+      if (parts.length > 1) {
+        // Get the last part and trim it
+        const cityPart = parts[parts.length - 1].trim();
+        console.log('Extracted city from hotel name:', cityPart);
+        return cityPart;
+      }
+      // If no comma found, return the original name
+      console.log('No comma found in hotel name, using original name');
+      return hotelName.trim();
+    };
+
+    const cityName = extractCityFromHotelName(hotelName);
+    console.log('City name for autosuggest:', cityName);
+
+    // Hit the autosuggest API with the city name
+    const autosuggestPayload = {
+      "autosuggest": {
+        "query": cityName,
+        "locale": "en-US"
+      }
+    };
+
+    console.log('Autosuggest payload:', JSON.stringify(autosuggestPayload, null, 2));
+
+    let client;
+    try {
+      console.log('Attempting Redis connection...');
+      client = await withTimeout(getRedisClient(), 10000, 'Redis connection');
+      console.log('Redis connection successful:', client ? 'Yes' : 'No');
+    } catch (err) {
+      console.error('Failed to connect to Redis:', err);
+      // Continue without Redis cache if connection fails
+    }
+
+    // Try to get cached data first
+    let cachedData;
+    if (client && client.isOpen) {
+      try {
+        console.log('Attempting to get cached data for city:', cityName);
+        cachedData = await withTimeout(
+          client.get(`autosuggest:${cityName}`), 
+          5000, 
+          'Redis cache retrieval'
+        );
+        console.log('Cached data found:', cachedData ? 'Yes' : 'No');
+      } catch (err) {
+        console.log('Redis get error:', err);
+      }
+    }
+
+    let parsedData = null;
+    if (cachedData) {
+      try {
+        parsedData = JSON.parse(cachedData);
+        console.log('Cached data parsed successfully, length:', parsedData ? parsedData.length : 0);
+      } catch (parseErr) {
+        console.log('Redis data parse error:', parseErr);
+        // If cached data is corrupted, delete it
+        if (client && client.isOpen) {
+          try {
+            await withTimeout(client.del(`autosuggest:${cityName}`), 5000, 'Redis cache deletion');
+            console.log('Deleted corrupted cache data');
+          } catch (delErr) {
+            console.log('Cannot delete corrupted cache:', delErr);
+          }
+        }
+      }
+    }
+
+    let responseData = [];
+    
+    if (Array.isArray(parsedData)) {
+      console.log('Using cached data, items count:', parsedData.length);
+      responseData = parsedData;
+    } else {
+      console.log('No valid cached data, making external API call...');
+      
+      // Make API call to autosuggest
+      const data = await withTimeout(
+        Api.post("/autosuggest", autosuggestPayload),
+        30000, // 30 second timeout
+        'External API call'
+      );
+
+      console.log('Autosuggest API response received');
+
+      if (data && data.data) {
+        // Process hotels from autosuggest response
+        if (data.data.hotel && data.data.hotel.results) {
+          const hotelResults = data.data.hotel.results || [];
+          console.log('Processing hotel data, results count:', hotelResults.length);
+          
+          hotelResults.forEach((item, index) => {
+            const hotelItem = {
+              ...item,
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name}`,
+              type: 'hotel'
+            };
+            
+            responseData.push(hotelItem);
+          });
+          console.log('Hotel processing completed, added items:', hotelResults.length);
+        }
+
+        // Process cities from autosuggest response
+        if (data.data.city && data.data.city.results) {
+          const cityResults = data.data.city.results || [];
+          console.log('Processing city data, results count:', cityResults.length);
+          
+          cityResults.forEach((item, index) => {
+            const cityItem = {
+              ...item,
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name} | (${item.hotelCount})`,
+              type: 'city',
+              id: limitRegionIds(item.id, 50)
+            };
+            
+            responseData.push(cityItem);
+          });
+          console.log('City processing completed, added items:', cityResults.length);
+        }
+
+        // Cache the response data
+        if (responseData && responseData.length > 0 && client && client.isOpen) {
+          try {
+            console.log('Caching response data...');
+            await withTimeout(
+              client.setEx(`autosuggest:${cityName}`, 7200, JSON.stringify(responseData)),
+              5000,
+              'Redis cache set'
+            );
+            console.log('Cache set completed');
+          } catch (err) {
+            console.log('Redis set error:', err);
+          }
+        }
+      }
+    }
+
+    // Find the exact hotel match or best match
+    let bestMatch = null;
+    let exactMatch = null;
+    let cityMatch = null;
+
+    for (const item of responseData) {
+      if (item.type === 'hotel') {
+        // Check for exact match
+        if (item.name.toLowerCase() === hotelName.toLowerCase()) {
+          exactMatch = item;
+          break;
+        }
+        
+        // Check for partial match
+        if (item.name.toLowerCase().includes(hotelName.toLowerCase()) || 
+            hotelName.toLowerCase().includes(item.name.toLowerCase())) {
+          if (!bestMatch) {
+            bestMatch = item;
+          }
+        }
+      } else if (item.type === 'city') {
+        // Check if city name matches the hotel name or city name
+        // Also check if the city name is mentioned anywhere in the hotel name
+        if (item.name.toLowerCase() === hotelName.toLowerCase() || 
+            item.name.toLowerCase() === cityName.toLowerCase() ||
+            hotelName.toLowerCase().includes(item.name.toLowerCase())) {
+          cityMatch = item;
+        }
+      }
+    }
+
+    // Always search for hotels in the city if we found a city match
+    // This will return all hotels in the city instead of just one hotel
+    if (cityMatch) {
+      console.log('City match found, searching for hotels in city:', cityMatch.name);
+      
+      try {
+        // Create search object for city search
+        const searchObj = {
+          search: {
+            source_market: "IN",
+            type: "city",
+            id: cityMatch.id,
+            name: cityMatch.name,
+            check_in_date: new Date().toISOString().split('T')[0], // Today's date
+            check_out_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Tomorrow's date
+            total_adult_count: "1",
+            total_child_count: "0",
+            total_room_count: "1",
+            details: [{
+              adult_count: 1,
+              child_count: 0
+            }]
+          }
+        };
+
+        console.log('Searching for hotels in city with payload:', JSON.stringify(searchObj, null, 2));
+
+        // Make search API call
+        const searchData = await withTimeout(
+          Api.post("/search", searchObj),
+          30000, // 30 second timeout
+          'City search API call'
+        );
+
+        console.log('City search API response received');
+
+        if (searchData && searchData.data && searchData.data.hotels && searchData.data.hotels.length > 0) {
+          const hotelsInCity = searchData.data.hotels;
+          console.log(`Found ${hotelsInCity.length} hotels in city ${cityMatch.name}`);
+
+          // Apply markup to hotels
+          const hotelsWithMarkup = await Promise.all(
+            hotelsInCity.map(async (hotel) => {
+              if (hotel.rates && hotel.rates.packages) {
+                const packagesWithMarkup = await Promise.all(
+                  hotel.rates.packages.map(async (pkg) => {
+                    try {
+                      return await applyOwnerMarkup(pkg);
+                    } catch (err) {
+                      console.error('Error applying markup to package:', err);
+                      return pkg;
+                    }
+                  })
+                );
+                return {
+                  ...hotel,
+                  rates: {
+                    ...hotel.rates,
+                    packages: packagesWithMarkup
+                  }
+                };
+              }
+              return hotel;
+            })
+          );
+
+          const response = {
+            success: true,
+            message: `Found ${hotelsInCity.length} hotels in ${cityMatch.name}`,
+            data: {
+              cityName: cityMatch.name,
+              cityId: cityMatch.id,
+              hotelCount: cityMatch.hotelCount,
+              type: 'city',
+              transaction_identifier: cityMatch.transaction_identifier,
+              displayName: cityMatch.displayName,
+              hotels: hotelsWithMarkup.slice(0, 20), // Limit to first 20 hotels
+              totalHotels: hotelsInCity.length,
+              search: searchData.data.search
+            }
+          };
+
+          const totalTime = Date.now() - startTime;
+          console.log('=== GET HOTEL ID FUNCTION COMPLETED (CITY SEARCH) ===');
+          console.log('Total execution time:', totalTime, 'ms');
+
+          return res.json(response);
+        } else {
+          console.log('No hotels found in city search');
+          return res.status(404).json({
+            success: false,
+            message: `No hotels found in ${cityMatch.name}`,
+            data: {
+              cityName: cityMatch.name,
+              cityId: cityMatch.id,
+              type: 'city'
+            }
+          });
+        }
+      } catch (searchError) {
+        console.error('Error searching for hotels in city:', searchError);
+        return res.status(500).json({
+          success: false,
+          message: 'Error searching for hotels in city',
+          error: searchError.message
+        });
+      }
+    }
+
+    // If we have a city match, prioritize city search over individual hotel match
+    // This ensures we return all hotels in the city when a city is mentioned
+    if (cityMatch) {
+      console.log('City match found, prioritizing city search over hotel match');
+      // The city search logic above will handle the response
+      return; // Exit here as the city search will send the response
+    }
+
+    // Fallback: If no city match found but we have a city name, try to search for hotels in that city
+    // This handles cases where the city might not be in autosuggest results but we extracted it from hotel name
+    if (cityName && cityName !== hotelName.trim()) {
+      console.log('No city match in autosuggest, but city name extracted. Attempting city search for:', cityName);
+      
+      try {
+        // Create a basic search object for the extracted city
+        const searchObj = {
+          search: {
+            source_market: "IN",
+            type: "city",
+            name: cityName,
+            check_in_date: new Date().toISOString().split('T')[0], // Today's date
+            check_out_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Tomorrow's date
+            total_adult_count: "1",
+            total_child_count: "0",
+            total_room_count: "1",
+            details: [{
+              adult_count: 1,
+              child_count: 0
+            }]
+          }
+        };
+
+        console.log('Fallback city search with payload:', JSON.stringify(searchObj, null, 2));
+
+        // Make search API call
+        const searchData = await withTimeout(
+          Api.post("/search", searchObj),
+          30000, // 30 second timeout
+          'Fallback city search API call'
+        );
+
+        console.log('Fallback city search API response received');
+
+        if (searchData && searchData.data && searchData.data.hotels && searchData.data.hotels.length > 0) {
+          const hotelsInCity = searchData.data.hotels;
+          console.log(`Found ${hotelsInCity.length} hotels in fallback city search for ${cityName}`);
+
+          // Apply markup to hotels
+          const hotelsWithMarkup = await Promise.all(
+            hotelsInCity.map(async (hotel) => {
+              if (hotel.rates && hotel.rates.packages) {
+                const packagesWithMarkup = await Promise.all(
+                  hotel.rates.packages.map(async (pkg) => {
+                    try {
+                      return await applyOwnerMarkup(pkg);
+                    } catch (err) {
+                      console.error('Error applying markup to package:', err);
+                      return pkg;
+                    }
+                  })
+                );
+                return {
+                  ...hotel,
+                  rates: {
+                    ...hotel.rates,
+                    packages: packagesWithMarkup
+                  }
+                };
+              }
+              return hotel;
+            })
+          );
+
+          const response = {
+            success: true,
+            message: `Found ${hotelsInCity.length} hotels in ${cityName}`,
+            data: {
+              cityName: cityName,
+              type: 'city',
+              transaction_identifier: searchData.transaction_identifier,
+              displayName: `${cityName} | Hotels`,
+              hotels: hotelsWithMarkup.slice(0, 20), // Limit to first 20 hotels
+              totalHotels: hotelsInCity.length,
+              search: searchData.data.search
+            }
+          };
+
+          const totalTime = Date.now() - startTime;
+          console.log('=== GET HOTEL ID FUNCTION COMPLETED (FALLBACK CITY SEARCH) ===');
+          console.log('Total execution time:', totalTime, 'ms');
+
+          return res.json(response);
+        }
+      } catch (searchError) {
+        console.error('Error in fallback city search:', searchError);
+        // Continue to hotel match logic if fallback fails
+      }
+    }
+
+    // Return the best hotel match found only if no city match
+    const selectedMatch = exactMatch || bestMatch;
+
+    if (!selectedMatch) {
+      console.log('No hotel match found in autosuggest results');
+      return res.status(404).json({
+        success: false,
+        message: 'Hotel not found in the specified city',
+        data: {
+          hotelName,
+          cityName,
+          availableHotels: responseData.filter(item => item.type === 'hotel').length,
+          availableCities: responseData.filter(item => item.type === 'city').length
+        }
+      });
+    }
+
+    console.log('Selected hotel match:', {
+      name: selectedMatch.name,
+      id: selectedMatch.id,
+      type: selectedMatch.type
+    });
+
+    const response = {
+      success: true,
+      message: 'Hotel ID retrieved successfully',
+      data: {
+        hotelName: selectedMatch.name,
+        hotelId: selectedMatch.id,
+        type: selectedMatch.type,
+        cityName: cityName,
+        transaction_identifier: selectedMatch.transaction_identifier,
+        displayName: selectedMatch.displayName
+      }
+    };
+
+    const totalTime = Date.now() - startTime;
+    console.log('=== GET HOTEL ID FUNCTION COMPLETED ===');
+    console.log('Total execution time:', totalTime, 'ms');
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('=== ERROR IN GET HOTEL ID FUNCTION ===');
+    console.error('Error details:', error);
+    
+    // Handle API errors specifically
+    if (error.name === 'APIError') {
+      console.error('API Error Details:', {
+        errorCode: error.errorCode,
+        errorMsg: error.errorMsg,
+        status: error.status
+      });
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Hotel search service temporarily unavailable',
+        error: error.errorMsg || 'External API error',
+        errorCode: error.errorCode
+      });
+    }
+    
+    // Handle timeout errors
+    if (error.message && error.message.includes('timeout')) {
+      return res.status(504).json({
+        success: false,
+        message: 'Hotel search request timed out',
+        error: 'The search request took too long to complete. Please try again.'
+      });
+    }
+    
+    // Handle network errors
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        success: false,
+        message: 'Hotel search service unavailable',
+        error: 'Unable to connect to the hotel search service. Please try again later.'
+      });
+    }
+    
+    // Generic error response
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while retrieving hotel ID',
+      error: error.message || 'Unknown error'
+    });
+  }
+};
+
+exports.searchHotelsByCity = async (req, res, next) => {
+  console.log('=== SEARCH HOTELS BY CITY FUNCTION START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  
+  const startTime = Date.now();
+
+  try {
+    const { cityName, checkindate, checkoutdate, details, page = 1, perPage = 50, currentHotelsCount = 0, transaction_identifier, filters = {} } = req.body;
+    
+    if (!cityName || typeof cityName !== 'string' || cityName.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'City name is required and must be a non-empty string'
+      });
+    }
+
+    if (!checkindate || !checkoutdate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Check-in and check-out dates are required'
+      });
+    }
+
+    if (!details || !Array.isArray(details) || details.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Details array is required and must not be empty'
+      });
+    }
+
+    console.log('Processing city search for:', cityName);
+
+    // First, hit the autosuggest API to get city information
+    const autosuggestPayload = {
+      "autosuggest": {
+        "query": cityName,
+        "locale": "en-US"
+      }
+    };
+
+    console.log('Autosuggest payload:', JSON.stringify(autosuggestPayload, null, 2));
+
+    let client;
+    try {
+      console.log('Attempting Redis connection...');
+      client = await withTimeout(getRedisClient(), 10000, 'Redis connection');
+      console.log('Redis connection successful:', client ? 'Yes' : 'No');
+    } catch (err) {
+      console.error('Failed to connect to Redis:', err);
+      // Continue without Redis cache if connection fails
+    }
+
+    // Try to get cached autosuggest data first
+    let cachedData;
+    if (client && client.isOpen) {
+      try {
+        console.log('Attempting to get cached autosuggest data for city:', cityName);
+        cachedData = await withTimeout(
+          client.get(`autosuggest:${cityName}`), 
+          5000, 
+          'Redis cache retrieval'
+        );
+        console.log('Cached autosuggest data found:', cachedData ? 'Yes' : 'No');
+      } catch (err) {
+        console.log('Redis get error:', err);
+      }
+    }
+
+    let autosuggestData = null;
+    if (cachedData) {
+      try {
+        autosuggestData = JSON.parse(cachedData);
+        console.log('Cached autosuggest data parsed successfully, length:', autosuggestData ? autosuggestData.length : 0);
+      } catch (parseErr) {
+        console.log('Redis data parse error:', parseErr);
+        // If cached data is corrupted, delete it
+        if (client && client.isOpen) {
+          try {
+            await withTimeout(client.del(`autosuggest:${cityName}`), 5000, 'Redis cache deletion');
+            console.log('Deleted corrupted cache data');
+          } catch (delErr) {
+            console.log('Cannot delete corrupted cache:', delErr);
+          }
+        }
+      }
+    }
+
+    let cityInfo = null;
+    
+    if (Array.isArray(autosuggestData)) {
+      console.log('Using cached autosuggest data, items count:', autosuggestData.length);
+      // Find city type in cached data
+      cityInfo = autosuggestData.find(item => item.type === 'city');
+    } else {
+      console.log('No valid cached autosuggest data, making external API call...');
+      
+      // Make API call to autosuggest
+      const data = await withTimeout(
+        Api.post("/autosuggest", autosuggestPayload),
+        30000, // 30 second timeout
+        'External autosuggest API call'
+      );
+
+      console.log('Autosuggest API response received');
+
+      if (data && data.data && data.data.city && data.data.city.results) {
+        const cityResults = data.data.city.results || [];
+        console.log('Processing city data from autosuggest, results count:', cityResults.length);
+        
+        // Find the best matching city
+        for (const item of cityResults) {
+          if (item.name.toLowerCase() === cityName.toLowerCase() || 
+              cityName.toLowerCase().includes(item.name.toLowerCase()) ||
+              item.name.toLowerCase().includes(cityName.toLowerCase())) {
+            cityInfo = {
+              ...item,
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name} | (${item.hotelCount})`,
+              type: 'city',
+              id: limitRegionIds(item.id, 50)
+            };
+            break;
+          }
+        }
+
+        // Cache the autosuggest response data
+        if (cityResults.length > 0 && client && client.isOpen) {
+          try {
+            console.log('Caching autosuggest response data...');
+            const responseData = cityResults.map(item => ({
+              ...item,
+              transaction_identifier: data.transaction_identifier,
+              displayName: `${item.name} | (${item.hotelCount})`,
+              type: 'city',
+              id: limitRegionIds(item.id, 50)
+            }));
+            await withTimeout(
+              client.setEx(`autosuggest:${cityName}`, 7200, JSON.stringify(responseData)),
+              5000,
+              'Redis cache set'
+            );
+            console.log('Autosuggest cache set completed');
+          } catch (err) {
+            console.log('Redis set error:', err);
+          }
+        }
+      }
+    }
+
+    if (!cityInfo) {
+      console.log('No city information found in autosuggest results');
+      return res.status(404).json({
+        success: false,
+        message: 'City not found in autosuggest results',
+        data: {
+          cityName,
+          availableCities: autosuggestData ? autosuggestData.filter(item => item.type === 'city').length : 0
+        }
+      });
+    }
+
+    console.log('Found city info:', {
+      name: cityInfo.name,
+      id: cityInfo.id,
+      type: cityInfo.type,
+      hotelCount: cityInfo.hotelCount
+    });
+
+    // Process room details
+    const roomInfo = processRoomDetails(details);
+    console.log('Room details processed:', roomInfo);
+
+    // Create search object for the city
+    const searchObj = {
+      search: {
+        source_market: "IN",
+        type: cityInfo.type || "city",
+        id: cityInfo.id,
+        name: cityInfo.name,
+        check_in_date: checkindate,
+        check_out_date: checkoutdate,
+        total_adult_count: roomInfo.totalAdult.toString(),
+        total_child_count: roomInfo.totalChild.toString(),
+        total_room_count: roomInfo.totalRooms.toString(),
+        details: roomInfo.details
+      }
+    };
+
+    // Add transaction identifier if provided
+    if (transaction_identifier && transaction_identifier !== "undefined") {
+      searchObj.search.transaction_identifier = transaction_identifier;
+    }
+
+    console.log('Search object for city:', JSON.stringify(searchObj, null, 2));
+
+    // Get search data (cached or from API)
+    let searchData;
+    try {
+      searchData = await getSearchData(searchObj, client);
+    } catch (err) {
+      console.error('=== ERROR IN SEARCH HOTELS BY CITY FUNCTION ===');
+      console.error('Error details:', err);
+      
+      // Handle API errors specifically
+      if (err.name === 'APIError') {
+        console.error('API Error Details:', {
+          errorCode: err.errorCode,
+          errorMsg: err.errorMsg,
+          status: err.status
+        });
+        
+        return res.status(500).json({
+          success: false,
+          message: 'Hotel search service temporarily unavailable',
+          error: err.errorMsg || 'External API error',
+          errorCode: err.errorCode
+        });
+      }
+      
+      // Handle timeout errors
+      if (err.message && err.message.includes('timeout')) {
+        return res.status(504).json({
+          success: false,
+          message: 'Hotel search request timed out',
+          error: 'The search request took too long to complete. Please try again.'
+        });
+      }
+      
+      // Handle network errors
+      if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        return res.status(503).json({
+          success: false,
+          message: 'Hotel search service unavailable',
+          error: 'Unable to connect to the hotel search service. Please try again later.'
+        });
+      }
+      
+      // Generic error response
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch hotel data',
+        error: err.message || 'Unknown error'
+      });
+    }
+
+    // Validate search API response
+    if (!searchData || !searchData.data) {
+      console.log('No data received from search API:', searchData);
+      return res.status(404).json({
+        success: false,
+        message: 'No hotels found for the city'
+      });
+    }
+
+    if (!searchData.data.hotels || searchData.data.hotels.length === 0) {
+      console.log('No hotels in search API response');
+      return res.status(404).json({
+        success: false,
+        message: `No hotels found in ${cityInfo.name}`,
+        data: {
+          cityName: cityInfo.name,
+          cityId: cityInfo.id,
+          type: cityInfo.type
+        }
+      });
+    }
+
+    // Process hotels with pagination
+    const hotelsList = [...searchData.data.hotels];
+    console.log(`Total hotels received: ${hotelsList.length}`);
+
+    // Calculate pagination
+    const pagination = calculatePagination(hotelsList.length, page, perPage, currentHotelsCount);
+    
+    if (page > pagination.totalPages) {
+      return res.status(422).json({
+        success: false,
+        message: 'Invalid page number'
+      });
+    }
+
+    // Select hotels for current page
+    const lowerBound = currentHotelsCount;
+    const upperBound = Math.min(lowerBound + perPage, hotelsList.length);
+    const selectedHotels = hotelsList.slice(lowerBound, upperBound);
+
+    console.log(`Processing ${selectedHotels.length} hotels for page ${page}`);
+
+    // Process hotels with markup application
+    let processedHotels = [];
+    let minPrice = Infinity;
+    let maxPrice = 0;
+
+    try {
+      // Process each hotel with markup application
+      const hotelPromises = selectedHotels.map(async (hotel) => {
+        try {
+          hotel.hotelId = hotel._id;
+          
+          // Apply markup to all hotel packages
+          if (hotel.rates && hotel.rates.packages) {
+            const packagesWithMarkup = await Promise.all(
+              hotel.rates.packages.map(async (pkg) => {
+                try {
+                  return await applyOwnerMarkup(pkg);
+                } catch (err) {
+                  console.error('Error applying markup to package:', err);
+                  return pkg; // Return original package if markup fails
+                }
+              })
+            );
+            
+            hotel.rates.packages = packagesWithMarkup;
+          }
+          
+          // Process all packages for the hotel (with markup applied)
+          const processedPackages = [];
+          let hotelMinPrice = Infinity;
+          let hotelMaxPrice = 0;
+
+          for (const hotelPackage of hotel.rates.packages) {
+            if (!hotelPackage) {
+              console.log(`Skipping invalid package for hotel ${hotel.name}`);
+              continue;
+            }
+
+            try {
+              // Use package with markup applied
+              processedPackages.push(hotelPackage);
+              
+              // Update hotel price range using chargeable_rate (which includes markup)
+              const packagePrice = hotelPackage.chargeable_rate || hotelPackage.base_amount || hotelPackage.room_rate || 0;
+              if (packagePrice < hotelMinPrice) {
+                hotelMinPrice = packagePrice;
+              }
+              if (packagePrice > hotelMaxPrice) {
+                hotelMaxPrice = packagePrice;
+              }
+            } catch (err) {
+              console.log(`Error processing package in hotel ${hotel.name}:`, err);
+              // Include package as-is if processing fails
+              processedPackages.push(hotelPackage);
+            }
+          }
+
+          // Update hotel packages
+          hotel.rates.packages = processedPackages.length > 0 ? processedPackages : [{
+            base_amount: 0,
+            service_component: 0,
+            gst: 0,
+            chargeable_rate: 0
+          }];
+
+          // Update global price range
+          if (hotelMinPrice < minPrice) {
+            minPrice = hotelMinPrice;
+          }
+          if (hotelMaxPrice > maxPrice) {
+            maxPrice = hotelMaxPrice;
+          }
+
+          return hotel;
+        } catch (err) {
+          console.error(`Error processing hotel ${hotel.name}:`, err);
+          return null;
+        }
+      });
+
+      const processedResults = await Promise.all(hotelPromises);
+      processedHotels = processedResults.filter(hotel => hotel !== null);
+
+    } catch (err) {
+      console.error('Error processing hotels:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Error processing hotel data'
+      });
+    }
+
+    // Apply filters
+    const filteredHotels = applyFilters(processedHotels, filters);
+    console.log(`Hotels after filtering: ${filteredHotels.length}`);
+
+    // Update pagination for filtered results
+    const actualHotelsCount = filteredHotels.length;
+    const actualCurrentHotelsCount = currentHotelsCount + actualHotelsCount;
+    
+    const finalPagination = {
+      currentHotelsCount: actualCurrentHotelsCount,
+      totalHotelsCount: hotelsList.length,
+      totalPages: Math.ceil(hotelsList.length / perPage),
+      pollingStatus: pagination.pollingStatus,
+      page,
+      perPage
+    };
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: `Found ${hotelsList.length} hotels in ${cityInfo.name}`,
+      data: {
+        search: searchData.data.search,
+        region: searchData.data.region,
+        city: {
+          name: cityInfo.name,
+          id: cityInfo.id,
+          type: cityInfo.type,
+          hotelCount: cityInfo.hotelCount,
+          transaction_identifier: cityInfo.transaction_identifier,
+          displayName: cityInfo.displayName
+        },
+        hotels: filteredHotels,
+        price: {
+          minPrice: Math.floor(minPrice === Infinity ? 0 : minPrice),
+          maxPrice: Math.ceil(maxPrice === 0 ? 1 : maxPrice)
+        },
+        pagination: finalPagination,
+        transaction_identifier: searchData.transaction_identifier
+      }
+    };
+
+    const totalTime = Date.now() - startTime;
+    console.log('=== SEARCH HOTELS BY CITY FUNCTION COMPLETED ===');
+    console.log(`Total execution time: ${totalTime}ms`);
+    console.log(`Hotels returned: ${filteredHotels.length}`);
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('=== ERROR IN SEARCH HOTELS BY CITY FUNCTION ===');
+    console.error('Error details:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
   

@@ -55,4 +55,48 @@ export const getHotelIdsForPage = (allHotelIds: string[], page: number, perPage:
   const startIndex = (page - 1) * perPage;
   const endIndex = startIndex + perPage;
   return allHotelIds.slice(startIndex, endIndex);
+};
+
+/**
+ * Extract the last word from a city name
+ * @param cityName - The full city name (e.g., "New Delhi", "Mumbai", "Bangalore")
+ * @returns The last word of the city name (e.g., "Delhi", "Mumbai", "Bangalore")
+ */
+export const extractLastWordFromCityName = (cityName: string): string => {
+  if (!cityName || typeof cityName !== 'string') {
+    return cityName || '';
+  }
+  
+  // Trim whitespace and split by spaces
+  const trimmedName = cityName.trim();
+  const words = trimmedName.split(/\s+/);
+  
+  // Return the last word
+  return words[words.length - 1] || trimmedName;
+};
+
+/**
+ * Test function to verify extractLastWordFromCityName works correctly
+ * This function can be called to test various city name formats
+ */
+export const testExtractLastWordFromCityName = () => {
+  const testCases = [
+    { input: 'New Delhi', expected: 'Delhi' },
+    { input: 'Mumbai', expected: 'Mumbai' },
+    { input: 'Bangalore', expected: 'Bangalore' },
+    { input: 'New York', expected: 'York' },
+    { input: 'Los Angeles', expected: 'Angeles' },
+    { input: 'San Francisco', expected: 'Francisco' },
+    { input: '  New Delhi  ', expected: 'Delhi' },
+    { input: '', expected: '' },
+    { input: '   ', expected: '' },
+    { input: 'Delhi', expected: 'Delhi' }
+  ];
+
+  console.log('Testing extractLastWordFromCityName function:');
+  testCases.forEach(({ input, expected }) => {
+    const result = extractLastWordFromCityName(input);
+    const passed = result === expected;
+    console.log(`${passed ? '✅' : '❌'} "${input}" -> "${result}" (expected: "${expected}")`);
+  });
 }; 

@@ -179,8 +179,15 @@ export default function HotelListingPage() {
         throw new Error(data.message || 'Search failed')
       }
     } catch (err) {
-      console.error('❌ Search error:', err)
-      setError(err instanceof Error ? err.message : 'Search failed')
+      const errMsg = err instanceof Error ? err.message : 'Search failed'
+      // If backend says "No hotels found", treat as empty result, not error
+      if (errMsg.toLowerCase().includes('no hotels found')) {
+        setHotels([])
+        setTotalHotels(0)
+        setError(null)
+      } else {
+        setError(errMsg)
+      }
       // Handle 401 errors specifically
       if (err instanceof Error && err.message.includes('401')) {
         console.error('Authentication required for hotel search')
@@ -336,6 +343,13 @@ export default function HotelListingPage() {
           {/* Hotel Results */}
           <div className="lg:w-3/4">
             <SortBar selected={sort} onSortChange={setSort} />
+            {/* Show 'No hotels found' message if no results and not loading */}
+            {!loading && hotels.length === 0 && !error && (
+              <div className="text-center text-gray-500 py-12">
+                <h2 className="text-xl font-semibold mb-2">No hotels found</h2>
+                <p>Try changing your search criteria or filters.</p>
+              </div>
+            )}
             <HotelList 
               hotels={getSortedHotels()}
               loading={loading}

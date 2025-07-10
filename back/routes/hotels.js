@@ -8,10 +8,12 @@ const { isAuth, isCompanyOrEmployee, isActive } = require('../middleware/isauth'
 router.post('/suggest', isAuth, isCompanyOrEmployee, isActive, hotelController.suggest);
 router.post('/search', isAuth, isCompanyOrEmployee, isActive, hotelController.search);
 router.post('/searchHotels', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotels);
+router.post('/searchHotelsByCity', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotelsByCity);
 router.post('/packages', isAuth, isCompanyOrEmployee, isActive, hotelController.searchPackages);
 router.post('/bookingpolicy', isAuth, isCompanyOrEmployee, isActive, hotelController.bookingpolicy);
 router.post('/prebook', isAuth, isCompanyOrEmployee, isActive, hotelController.prebook);
 router.get('/transaction-identifier', isAuth, isCompanyOrEmployee, isActive, hotelController.getTransactionIdentifier);
+router.post('/get-hotel-id', isAuth, isCompanyOrEmployee, isActive, hotelController.getHotelId);
 
 // Payment routes
 router.get('/process-payment/:id', paymentController.processPayment);

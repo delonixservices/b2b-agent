@@ -27,7 +27,7 @@ class ApiService {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 30000 // 30 seconds timeout
+      timeout: 60000 // 1 minute timeout
     });
   }
 

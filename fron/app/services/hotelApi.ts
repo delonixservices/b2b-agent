@@ -232,6 +232,82 @@ export interface ConfirmBookingResponse {
   status: 'confirmed' | 'paid' | 'payment_pending';
 }
 
+export interface GetHotelIdRequest {
+  hotelName: string;
+}
+
+export interface GetHotelIdResponse {
+  success: boolean;
+  message: string;
+  data: {
+    hotelName: string;
+    hotelId: string;
+    type: string;
+    cityName: string;
+    transaction_identifier: string;
+    displayName: string;
+  };
+}
+
+// Add new interface for searchHotelsByCity
+export interface SearchHotelsByCityRequest {
+  cityName: string;
+  checkindate: string;
+  checkoutdate: string;
+  details: Array<{
+    adult_count: number;
+    child_count?: number;
+    children?: Array<{
+      age: number;
+    }>;
+  }>;
+  page?: number;
+  perPage?: number;
+  currentHotelsCount?: number;
+  transaction_identifier?: string;
+  filters?: {
+    roomType?: string[];
+    foodType?: string[];
+    refundable?: boolean[];
+    starRating?: number[];
+    price?: {
+      min: number;
+      max: number;
+    };
+  };
+}
+
+export interface SearchHotelsByCityResponse {
+  success: boolean;
+  message: string;
+  data: {
+    search: any;
+    region: any;
+    city: {
+      name: string;
+      id: string;
+      type: string;
+      hotelCount: number;
+      transaction_identifier: string;
+      displayName: string;
+    };
+    hotels: HotelDetails[];
+    price: {
+      minPrice: number;
+      maxPrice: number;
+    };
+    pagination: {
+      currentHotelsCount: number;
+      totalHotelsCount: number;
+      totalPages: number;
+      pollingStatus: string;
+      page: number;
+      perPage: number;
+    };
+    transaction_identifier?: string;
+  };
+}
+
 // Wallet Payment APIs
 
 // Get Wallet Balance
@@ -374,10 +450,36 @@ export const hotelApi = {
       if (response.status === 401) {
         throw new Error('401: Authentication required');
       }
-      
       // Try to get error message from response
       try {
         const errorData = await response.json();
+        // If 404 and message is 'No hotels found for the given criteria', treat as empty result
+        if (
+          response.status === 404 &&
+          errorData &&
+          typeof errorData.message === 'string' &&
+          errorData.message.toLowerCase().includes('no hotels found')
+        ) {
+          return {
+            success: true,
+            message: errorData.message,
+            data: {
+              search: {},
+              region: {},
+              hotels: [],
+              price: { minPrice: 0, maxPrice: 0 },
+              pagination: {
+                currentHotelsCount: 0,
+                totalHotelsCount: 0,
+                totalPages: 0,
+                pollingStatus: 'complete',
+                page: 1,
+                perPage: 50
+              },
+              transaction_identifier: ''
+            }
+          };
+        }
         throw new Error(errorData.message || errorData.error || `Failed to search hotels: ${response.status}`);
       } catch (parseError) {
         throw new Error(`Failed to search hotels: ${response.status}`);
@@ -563,6 +665,72 @@ export const hotelApi = {
         throw new Error(errorData.message || `Failed to confirm booking: ${response.status}`);
       } catch (parseError) {
         throw new Error(`Failed to confirm booking: ${response.status}`);
+      }
+    }
+
+    return response.json();
+  },
+
+  // Get hotel ID from hotel name
+  getHotelId: async (requestData: GetHotelIdRequest, token?: string): Promise<GetHotelIdResponse> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/hotels/get-hotel-id`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestData),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('401: Authentication required');
+      }
+      
+      // Try to get error message from response
+      try {
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || `Failed to get hotel ID: ${response.status}`);
+      } catch (parseError) {
+        throw new Error(`Failed to get hotel ID: ${response.status}`);
+      }
+    }
+
+    return response.json();
+  },
+
+  // Search hotels by city
+  searchHotelsByCity: async (requestData: SearchHotelsByCityRequest, token?: string): Promise<SearchHotelsByCityResponse> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/hotels/searchHotelsByCity`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestData),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('401: Authentication required');
+      }
+      
+      // Try to get error message from response
+      try {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to search hotels by city: ${response.status}`);
+      } catch (parseError) {
+        throw new Error(`Failed to search hotels by city: ${response.status}`);
       }
     }
 
