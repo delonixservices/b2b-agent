@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/mongo');
+const checkEnvironment = require('./config/env-check');
 
 const app = express();
 
@@ -31,8 +32,25 @@ const PORT = process.env.PORT || 3334;
 // Initialize the application
 const initializeApp = async () => {
   try {
-    // Connect to MongoDB first
-    await connectDB();
+    // Check environment configuration
+    checkEnvironment();
+    
+    // Connect to MongoDB first with retry logic
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        await connectDB();
+        break;
+      } catch (error) {
+        retries--;
+        if (retries === 0) {
+          console.error('Failed to connect to MongoDB after 5 attempts:', error);
+          process.exit(1);
+        }
+        console.log(`MongoDB connection failed, retrying... (${retries} attempts left)`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+      }
+    }
     
     // Load routes after database connection is established
     app.use('/api/auth', require('./routes/auth'));
@@ -43,7 +61,7 @@ const initializeApp = async () => {
     app.use('/api/hotels', require('./routes/hotels'));
     
     // Start the server
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
   } catch (error) {
     console.error('Failed to initialize application:', error);
     process.exit(1);
