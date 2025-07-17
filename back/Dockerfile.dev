@@ -1,0 +1,30 @@
+# Use Node.js 18 Alpine as base image for development
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies including dev dependencies
+RUN apk add --no-cache libc6-compat
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Create uploads directory
+RUN mkdir -p uploads
+
+# Expose port
+EXPOSE 3334
+
+# Set environment variables for development
+ENV NODE_ENV=development
+ENV PORT=3334
+
+# Start the application with nodemon for hot reloading
+CMD ["npm", "run", "dev"] 

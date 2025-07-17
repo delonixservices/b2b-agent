@@ -35,7 +35,7 @@ export default function LogoUpload({ onLogoChange }: LogoUploadProps) {
       setIsLoading(true);
       setMessage(null);
 
-      const response = await fetch('http://localhost:3334/api/auth/logo', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/logo`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -79,7 +79,7 @@ export default function LogoUpload({ onLogoChange }: LogoUploadProps) {
       setIsLoading(true);
       setMessage(null);
 
-      const response = await fetch('http://localhost:3334/api/auth/upload-logo', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/upload-logo`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

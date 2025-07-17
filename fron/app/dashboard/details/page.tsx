@@ -38,7 +38,7 @@ export default function BusinessDetailsPage() {
         return;
       }
 
-      const response = await fetch('http://localhost:3334/api/auth/business-details', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/business-details`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -114,7 +114,7 @@ export default function BusinessDetailsPage() {
         logoUrl: logoUrl || undefined
       };
 
-      const response = await fetch('http://localhost:3334/api/auth/save-business-details', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/save-business-details`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

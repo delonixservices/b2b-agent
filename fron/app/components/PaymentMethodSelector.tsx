@@ -54,7 +54,7 @@ export default function PaymentMethodSelector({
       }
 
       const response = await getWalletBalance(token)
-      setWalletData(response.data)
+      setWalletData(response.data.wallet)
     } catch (error) {
       console.error('Error fetching wallet balance:', error)
       setWalletError('Failed to load wallet balance')

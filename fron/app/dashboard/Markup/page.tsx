@@ -43,7 +43,7 @@ export default function MarkupPage() {
         return;
       }
 
-      const response = await fetch('http://localhost:3334/api/company/markup', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/company/markup`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -85,7 +85,7 @@ export default function MarkupPage() {
         return;
       }
 
-      const response = await fetch('http://localhost:3334/api/company/markup', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/company/markup`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -130,7 +130,7 @@ export default function MarkupPage() {
         return;
       }
 
-      const response = await fetch('http://localhost:3334/api/company/markup/calculate', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/company/markup/calculate`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -169,7 +169,7 @@ export default function MarkupPage() {
         return;
       }
 
-      const response = await fetch('http://localhost:3334/api/company/markup/toggle', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/company/markup/toggle`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,

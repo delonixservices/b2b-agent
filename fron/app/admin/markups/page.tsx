@@ -46,7 +46,7 @@ export default function MarkupsPage() {
     }
 
     try {
-      const response = await fetch('http://localhost:3334/api/owner/config/calculate', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/owner/config/calculate`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

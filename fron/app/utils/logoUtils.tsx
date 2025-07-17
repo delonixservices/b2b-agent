@@ -1,3 +1,5 @@
+import React from 'react';
+
 // Logo utility functions for localStorage and server management
 
 export interface LogoData {

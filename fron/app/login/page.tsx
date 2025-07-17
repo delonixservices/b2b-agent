@@ -23,7 +23,7 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const response = await axios.post('http://localhost:3334/api/auth/login', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/login`, {
         phone,
         password
       })

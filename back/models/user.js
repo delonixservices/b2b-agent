@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 // Company Schema
 const companySchema = new mongoose.Schema({
-  phone: { type: String, required: true, unique: true },
+  phone: { type: String, required: true },
   name: { type: String, required: true },
   agencyName: { type: String },
   numPeople: { type: Number },
@@ -41,7 +41,7 @@ const companySchema = new mongoose.Schema({
 
 // Employee Schema
 const employeeSchema = new mongoose.Schema({
-  employeeId: { type: String, required: true, unique: true }, // Global unique employee ID
+  employeeId: { type: String, required: true }, // Global unique employee ID
   name: { type: String, required: true },
   phone: { type: String, required: true },
   password: { type: String, required: true },
@@ -61,6 +61,9 @@ employeeSchema.index({ employeeId: 1 }, { unique: true });
 
 // Create index for phone uniqueness in employees
 employeeSchema.index({ phone: 1 }, { unique: true });
+
+// Create index for company phone uniqueness
+companySchema.index({ phone: 1 }, { unique: true });
 
 // Create models
 const Company = mongoose.model('Company', companySchema);

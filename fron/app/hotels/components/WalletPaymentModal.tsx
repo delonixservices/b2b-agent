@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getWalletBalance, checkWalletPaymentEligibility, processWalletPayment, WalletBalanceResponse, WalletEligibilityResponse } from '../../../services/hotelApi';
-import { getToken } from '../../../utils/authUtils';
+import { getWalletBalance, checkWalletPaymentEligibility, processWalletPayment, WalletBalanceResponse, WalletEligibilityResponse } from '../../services/hotelApi';
+import { getToken } from '../../utils/authUtils';
 
 interface WalletPaymentModalProps {
   isOpen: boolean;

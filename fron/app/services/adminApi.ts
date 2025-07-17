@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3334';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_PATH || 'http://localhost:3334';
 
 export interface Admin {
   id: string;

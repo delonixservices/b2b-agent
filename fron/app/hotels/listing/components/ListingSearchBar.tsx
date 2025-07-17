@@ -102,7 +102,7 @@ export default function ListingSearchBar() {
     }
     setIsLoading(true)
     try {
-      const response = await fetch('http://localhost:3334/api/hotels/suggest', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_PATH}/api/hotels/suggest`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

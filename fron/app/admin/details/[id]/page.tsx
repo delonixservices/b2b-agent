@@ -61,7 +61,7 @@ export default function CompanyDetailsPage() {
         
         // Fetch employees
         const empRes = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3334"}/api/owner/companies/${companyId}/employees`,
+          `${process.env.NEXT_PUBLIC_API_PATH}/api/owner/companies/${companyId}/employees`,
           {
             headers: {
               Authorization: `Bearer ${token}`,

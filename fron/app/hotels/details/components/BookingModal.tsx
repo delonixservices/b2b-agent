@@ -157,8 +157,8 @@ export default function BookingModal({
         bookingId: prebookData.data.booking_id
       })
 
-      if (response.data.paymentUrl) {
-        window.location.href = response.data.paymentUrl
+      if (response.paymentUrl) {
+        window.location.href = response.paymentUrl
       } else {
         setStep('confirmation')
       }

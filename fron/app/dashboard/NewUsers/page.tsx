@@ -49,7 +49,7 @@ export default function NewUsersPage() {
 
   // Configure axios with auth token
   const api = axios.create({
-    baseURL: 'http://localhost:3334/api/auth',
+    baseURL: `${process.env.NEXT_PUBLIC_API_PATH}/api/auth`,
     headers: {
       'Content-Type': 'application/json',
     },

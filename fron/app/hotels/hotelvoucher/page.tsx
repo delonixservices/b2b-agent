@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
@@ -41,7 +41,7 @@ interface VoucherData {
   };
 }
 
-export default function HotelVoucherPage() {
+function HotelVoucherContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   
@@ -198,30 +198,35 @@ export default function HotelVoucherPage() {
           <div className="text-center mb-8 border-b border-gray-200 pb-6">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Hotel Booking Voucher</h1>
             <p className="text-gray-600">Booking Confirmed</p>
-            {voucherData.book_response?.data.book.booking_id && (
-              <p className="text-sm text-gray-500 mt-2">
-                Booking ID: {voucherData.book_response.data.book.booking_id}
-              </p>
-            )}
           </div>
 
-          {/* Guest Information */}
+          {/* Booking Details */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
             <div>
-              <h2 className="text-xl font-semibold text-gray-800 mb-4">Guest Information</h2>
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">Booking Information</h2>
               <div className="space-y-3">
                 <div>
-                  <span className="font-medium text-gray-700">Name:</span>
-                  <p className="text-gray-900">{voucherData.contactDetail.name} {voucherData.contactDetail.last_name}</p>
+                  <span className="font-medium text-gray-700">Booking ID:</span>
+                  <span className="ml-2 text-gray-900">{voucherData.book_response?.data.book.booking_id || 'N/A'}</span>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Email:</span>
-                  <p className="text-gray-900">{voucherData.contactDetail.email}</p>
+                  <span className="font-medium text-gray-700">Status:</span>
+                  <span className="ml-2 text-green-600 font-semibold">{voucherData.book_response?.data.book.status || 'Confirmed'}</span>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Mobile:</span>
-                  <p className="text-gray-900">{voucherData.contactDetail.mobile}</p>
+                  <span className="font-medium text-gray-700">Payment Status:</span>
+                  <span className="ml-2 text-green-600 font-semibold">{voucherData.payment_response?.order_status || 'Success'}</span>
                 </div>
+                <div>
+                  <span className="font-medium text-gray-700">Payment Mode:</span>
+                  <span className="ml-2 text-gray-900">{voucherData.payment_response?.payment_mode || 'N/A'}</span>
+                </div>
+                {voucherData.payment_response?.bank_ref_no && (
+                  <div>
+                    <span className="font-medium text-gray-700">Reference No:</span>
+                    <span className="ml-2 text-gray-900">{voucherData.payment_response.bank_ref_no}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -230,70 +235,82 @@ export default function HotelVoucherPage() {
               <div className="space-y-3">
                 <div>
                   <span className="font-medium text-gray-700">Hotel Name:</span>
-                  <p className="text-gray-900">{voucherData.hotel.originalName}</p>
+                  <span className="ml-2 text-gray-900">{voucherData.hotel.originalName}</span>
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Address:</span>
-                  <p className="text-gray-900">
-                    {voucherData.hotel.location.address}, {voucherData.hotel.location.city}
-                    {voucherData.hotel.location.country && `, ${voucherData.hotel.location.country}`}
-                  </p>
+                  <span className="ml-2 text-gray-900">{voucherData.hotel.location.address}</span>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">City:</span>
+                  <span className="ml-2 text-gray-900">{voucherData.hotel.location.city}</span>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Country:</span>
+                  <span className="ml-2 text-gray-900">{voucherData.hotel.location.country || 'N/A'}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Payment Information */}
-          <div className="bg-gray-50 rounded-lg p-6 mb-8">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4">Payment Information</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Contact Information */}
+          <div className="mb-8">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">Contact Information</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <span className="font-medium text-gray-700">Total Amount:</span>
-                <p className="text-2xl font-bold text-green-600">
-                  {formatPrice(voucherData.pricing.total_chargeable_amount, voucherData.pricing.currency)}
-                </p>
+                <span className="font-medium text-gray-700">Name:</span>
+                <span className="ml-2 text-gray-900">{voucherData.contactDetail.name} {voucherData.contactDetail.last_name}</span>
               </div>
               <div>
-                <span className="font-medium text-gray-700">Payment Status:</span>
-                <p className="text-green-600 font-semibold">
-                  {voucherData.payment_response?.order_status === 'Success' ? 'Paid' : 'Pending'}
-                </p>
+                <span className="font-medium text-gray-700">Email:</span>
+                <span className="ml-2 text-gray-900">{voucherData.contactDetail.email}</span>
               </div>
-              {voucherData.payment_response?.payment_mode && (
-                <div>
-                  <span className="font-medium text-gray-700">Payment Method:</span>
-                  <p className="text-gray-900">{voucherData.payment_response.payment_mode}</p>
-                </div>
-              )}
-              {voucherData.payment_response?.bank_ref_no && (
-                <div>
-                  <span className="font-medium text-gray-700">Reference Number:</span>
-                  <p className="text-gray-900">{voucherData.payment_response.bank_ref_no}</p>
-                </div>
-              )}
+              <div>
+                <span className="font-medium text-gray-700">Mobile:</span>
+                <span className="ml-2 text-gray-900">{voucherData.contactDetail.mobile}</span>
+              </div>
             </div>
           </div>
 
-          {/* Important Notes */}
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-8">
-            <h3 className="text-lg font-semibold text-yellow-800 mb-3">Important Information</h3>
-            <ul className="text-sm text-yellow-700 space-y-2">
-              <li>• Please present this voucher at the hotel reception during check-in</li>
-              <li>• Keep this voucher safe as it serves as proof of your booking</li>
-              <li>• For any queries, contact our support team at support@delonixtravel.com</li>
-              <li>• This voucher is valid for the dates specified in your booking</li>
-            </ul>
+          {/* Pricing */}
+          <div className="border-t border-gray-200 pt-6">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">Pricing</h2>
+            <div className="flex justify-between items-center">
+              <span className="text-lg font-medium text-gray-700">Total Amount:</span>
+              <span className="text-2xl font-bold text-gray-900">
+                {formatPrice(voucherData.pricing.total_chargeable_amount, voucherData.pricing.currency)}
+              </span>
+            </div>
           </div>
 
           {/* Footer */}
-          <div className="text-center text-sm text-gray-500 border-t border-gray-200 pt-6">
-            <p>Thank you for choosing our service!</p>
-            <p className="mt-1">TripBazaar - Your trusted travel partner</p>
+          <div className="mt-8 pt-6 border-t border-gray-200 text-center text-sm text-gray-600">
+            <p>This voucher serves as proof of your booking. Please present this at the hotel during check-in.</p>
+            <p className="mt-2">For any queries, please contact our customer support.</p>
           </div>
         </div>
       </div>
       
       <Footer />
     </div>
+  )
+}
+
+export default function HotelVoucherPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen">
+        <Navbar />
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading...</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    }>
+      <HotelVoucherContent />
+    </Suspense>
   )
 } 

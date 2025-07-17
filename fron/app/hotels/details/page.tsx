@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
@@ -109,7 +109,7 @@ interface SearchResponse {
   }
 }
 
-export default function HotelDetailsPage() {
+function HotelDetailsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   
@@ -451,7 +451,7 @@ export default function HotelDetailsPage() {
                     {/* Package Image on the left, small */}
                     <div className="mb-4 lg:mb-0 lg:mr-6 flex-shrink-0">
                       <img
-                        src={pkg.image || 'https://www.hoteldel.com/wp-content/uploads/2021/01/hotel-del-coronado-views-suite-K1TOS1-K1TOJ1-1600x900-1.jpg'}
+                        src={getHotelImage(hotel)}
                         alt={getPackageName(pkg)}
                         className="w-28 h-20 object-cover rounded shadow"
                       />
@@ -521,5 +521,24 @@ export default function HotelDetailsPage() {
       
       <Footer />
     </div>
+  )
+}
+
+export default function HotelDetailsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen">
+        <Navbar />
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading hotel details...</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    }>
+      <HotelDetailsContent />
+    </Suspense>
   )
 } 

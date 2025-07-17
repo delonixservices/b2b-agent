@@ -17,7 +17,13 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health check route
 app.get('/health', (req, res) => {
-  res.json({ message: 'Server is running' });
+  res.json({ 
+    message: 'Server is running',
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 const PORT = process.env.PORT || 3334;

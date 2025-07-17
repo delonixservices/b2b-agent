@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
@@ -75,7 +75,7 @@ const convertHotelDetailsToHotel = (hotelDetails: HotelDetails): Hotel => {
   }
 }
 
-export default function HotelListingPage() {
+function HotelListingPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   
@@ -550,5 +550,24 @@ export default function HotelListingPage() {
       
       <Footer />
     </div>
+  )
+}
+
+export default function HotelListingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen">
+        <Navbar />
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading hotels...</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    }>
+      <HotelListingPageContent />
+    </Suspense>
   )
 } 

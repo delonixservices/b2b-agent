@@ -120,7 +120,7 @@ export default function CreateConfigPage() {
       setFormData(prev => ({
         ...prev,
         [section]: {
-          ...prev[section as keyof typeof prev],
+          ...(prev[section] as { type: string; value: string }),
           [field]: value
         }
       }));

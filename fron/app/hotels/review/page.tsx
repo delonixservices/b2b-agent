@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Navbar from '../../components/Navbar'
 import Footer from '../../components/Footer'
-import { hotelApi, BookingPolicyResponse, PrebookRequest, ConfirmBookingRequest } from '../../services/hotelApi'
+import { hotelApi, BookingPolicyResponse, PrebookRequest, ConfirmBookingRequest, processWalletPayment } from '../../services/hotelApi'
 import { isAuthenticated, clearAuthData, getAuthToken } from '../../utils/authUtils'
 import PaymentMethodSelector from '../../components/PaymentMethodSelector'
 import PaymentSuccess from '../../components/PaymentSuccess'
@@ -25,7 +25,7 @@ interface Guest {
   }>;
 }
 
-export default function ReviewPage() {
+function ReviewPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   
@@ -311,7 +311,7 @@ export default function ReviewPage() {
         return
       }
 
-      const response = await hotelApi.processWalletPayment(token!, {
+      const response = await processWalletPayment(token!, {
         transactionId,
         bookingId
       })
@@ -341,7 +341,7 @@ export default function ReviewPage() {
 
     const bookingId = prebookData.data?.booking_id || prebookData.data?.prebook_id || prebookData.data?.id || prebookData.data?.transactionid
     if (bookingId) {
-      window.location.href = `http://localhost:3334/api/hotels/process-payment/${bookingId}`
+      window.location.href = `${process.env.NEXT_PUBLIC_API_PATH}/api/hotels/process-payment/${bookingId}`
     } else {
       setError('Booking ID not found for payment processing')
     }
@@ -361,6 +361,12 @@ export default function ReviewPage() {
   }, [])
 
   if (paymentSuccess) {
+    // Calculate total price for payment success display
+    const packageData = bookingPolicy?.data?.package
+    const nights = calculateNights(checkIn!, checkOut!)
+    const packagePrice = getPackagePrice(packageData)
+    const totalPrice = packagePrice * rooms * nights
+
     return (
       <div className="min-h-screen">
         <Navbar />
@@ -687,5 +693,24 @@ export default function ReviewPage() {
       
       <Footer />
     </div>
+  )
+}
+
+export default function ReviewPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen">
+        <Navbar />
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading booking details...</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    }>
+      <ReviewPageContent />
+    </Suspense>
   )
 }

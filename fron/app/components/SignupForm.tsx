@@ -25,7 +25,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post('http://localhost:3334/api/auth/send-otp', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/send-otp`, {
         phone
       })
 
@@ -45,7 +45,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post('http://localhost:3334/api/auth/verify-otp', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/verify-otp`, {
         phone,
         otp
       })
@@ -67,7 +67,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post('http://localhost:3334/api/auth/complete-signup', {
+      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/complete-signup`, {
         tempToken,
         name,
         agencyName,
