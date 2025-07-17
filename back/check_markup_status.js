@@ -1,14 +1,11 @@
 const mongoose = require('mongoose');
 const Markup = require('./models/markup');
-const config = require('./config/mongo');
 
 async function checkMarkupStatus() {
   try {
     // Connect to MongoDB
-    await mongoose.connect(config.url, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/b2b_agent';
+    await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB');
 
     // Check for active markup

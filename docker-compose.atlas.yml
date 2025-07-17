@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # Backend API Service
+  holidays_b2b-node:
+    build:
+      context: ./back
+      dockerfile: Dockerfile
+    container_name: holidays_b2b-node
+    ports:
+      - "3335:3335"
+    environment:
+      - NODE_ENV=production
+      - PORT=3335
+      - MONGO_URI=mongodb+srv://admin:tKPuRWiVHPH9xTdA@atlascluster.xw9oe1k.mongodb.net/b2b?retryWrites=true&w=majority&appName=AtlasCluster
+      - REDIS_HOST=holidays_redis
+      - REDIS_PORT=6379
+      - REDIS_AUTH=1956
+      - JWT_SECRET=your_super_secret_jwt_key_here
+      - JWT_EXPIRES_IN=86400
+      - HOTEL_APIURL=https://api.hotels.com/v1
+      - HOTEL_APIAUTH=your_hotel_api_auth_key_here
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=your_email@gmail.com
+      - SMTP_PASS=your_app_password_here
+      - CCAVENUE_MERCHANT_ID=your_merchant_id
+      - CCAVENUE_ACCESS_CODE=your_access_code
+      - CCAVENUE_WORKING_KEY=your_working_key
+      - CCAVENUE_API_URL=https://test.ccavenue.com/transaction/transaction.do?command=initiateTransaction
+      - MAX_FILE_SIZE=5242880
+      - ALLOWED_FILE_TYPES=image/jpeg,image/png,image/gif,application/pdf
+      - UPLOAD_DIR=./uploads
+      - RATE_LIMIT_WINDOW=900000
+      - RATE_LIMIT_MAX=100
+      - CORS_ORIGIN=http://localhost:3000,http://localhost:3001
+      - LOG_LEVEL=info
+      - AUTOSUGGEST_CACHE_TTL=7200
+      - BCRYPT_SALT_ROUNDS=12
+      - SESSION_SECRET=your_session_secret_here
+      - DEBUG=false
+      - ENABLE_API_DOCS=true
+      - FORCE_HTTPS=false
+      - TRUST_PROXY=false
+    volumes:
+      - ./back/uploads:/app/uploads
+    depends_on:
+      - holidays_redis
+    restart: unless-stopped
+    networks:
+      - holidays-network
+
+  # Redis Cache (still needed locally)
+  holidays_redis:
+    image: redis:7.2-alpine
+    container_name: holidays_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass 1956
+    volumes:
+      - holidays_redis_data:/data
+    restart: unless-stopped
+    networks:
+      - holidays-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "1956", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  holidays_redis_data:
+    driver: local
+
+networks:
+  holidays-network:
+    driver: bridge 
