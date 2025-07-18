@@ -11,7 +11,9 @@ const {
   saveBusinessDetails,
   getBusinessDetails,
   uploadLogo,
-  getLogo
+  getLogo,
+  sendPasswordResetOtp,
+  resetPassword
 } = require('../controllers/authConrtoller');
 const { isAuth, isCompany, isActive } = require('../middleware/isauth');
 
@@ -23,6 +25,8 @@ router.post('/verify-otp', verifyOtp);
 router.post('/complete-signup', completeSignup);
 router.post('/login', login);
 router.post('/business-details', submitBusinessDetails);
+router.post('/send-password-reset-otp', sendPasswordResetOtp);
+router.post('/reset-password', resetPassword);
 
 // Company only routes (employee management)
 router.post('/employees', isAuth, isCompany, isActive, addEmployee);

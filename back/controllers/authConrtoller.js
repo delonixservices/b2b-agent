@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const { Company, Employee } = require('../models/user');
+const { sendLoginOTP, sendPasswordResetOTP } = require('../services/smsService');
 
 // In-memory store for OTPs (for demo purposes)
 const otpStore = {};
@@ -61,18 +62,49 @@ const sendOtp = async (req, res) => {
       });
     }
 
-    // Generate and store OTP (hardcoded for demo)
-    const otp = '111111';
-    otpStore[phone] = otp;
+    // Generate and send dynamic OTP via SMS
+    try {
+      const { otp, response } = await sendLoginOTP(phone);
+      
+      // Store OTP in memory store with purpose
+      otpStore[phone] = { otp, purpose: 'signup' };
+      
+      // Set OTP expiration (5 minutes)
+      setTimeout(() => {
+        delete otpStore[phone];
+      }, 5 * 60 * 1000);
 
-    // In a real application, you would send this OTP via SMS
-    console.log(`OTP for ${phone}: ${otp}`);
+      console.log(`Dynamic OTP sent to ${phone}: ${otp}`);
 
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent successfully',
-      data: { phone }
-    });
+      res.status(200).json({
+        success: true,
+        message: 'OTP sent successfully',
+        data: { phone }
+      });
+
+    } catch (smsError) {
+      console.error('SMS sending failed:', smsError);
+      
+      // Fallback to hardcoded OTP for development/testing
+      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+        const fallbackOtp = '111111';
+        otpStore[phone] = { otp: fallbackOtp, purpose: 'signup' };
+        
+        console.log(`Fallback OTP for ${phone}: ${fallbackOtp}`);
+        console.log('OTP Store after storing:', otpStore);
+        
+        res.status(200).json({
+          success: true,
+          message: 'OTP sent successfully (fallback mode)',
+          data: { phone }
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to send OTP. Please try again later.'
+        });
+      }
+    }
 
   } catch (error) {
     console.error('Send OTP error:', error);
@@ -95,8 +127,26 @@ const verifyOtp = async (req, res) => {
       });
     }
 
-    // Check if OTP matches
-    if (otpStore[phone] !== otp) {
+    // Check if OTP matches (handle both string and object formats)
+    const storedOtp = otpStore[phone];
+    console.log('Verifying OTP for phone:', phone);
+    console.log('Stored OTP:', storedOtp);
+    console.log('Received OTP:', otp);
+    console.log('OTP Store:', otpStore);
+    
+    if (!storedOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP not found or expired'
+      });
+    }
+
+    // Handle both old string format and new object format
+    const storedOtpValue = typeof storedOtp === 'string' ? storedOtp : storedOtp.otp;
+    console.log('Stored OTP Value:', storedOtpValue);
+    console.log('Comparing:', storedOtpValue, '===', otp, '=', storedOtpValue === otp);
+    
+    if (storedOtpValue !== otp) {
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP'
@@ -768,6 +818,148 @@ const getLogo = async (req, res) => {
   }
 };
 
+// Send password reset OTP
+const sendPasswordResetOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Phone number is required' 
+      });
+    }
+
+    // Check if user exists (company or employee)
+    let user = await Company.findOne({ phone });
+    let userType = 'company';
+
+    if (!user) {
+      user = await Employee.findOne({ phone });
+      userType = 'employee';
+    }
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No account found with this phone number' 
+      });
+    }
+
+    // Generate and send password reset OTP via SMS
+    try {
+      const { otp, response } = await sendPasswordResetOTP(phone);
+      
+      // Store OTP in memory store with user type
+      otpStore[phone] = { otp, userType, purpose: 'password_reset' };
+      
+      // Set OTP expiration (5 minutes)
+      setTimeout(() => {
+        delete otpStore[phone];
+      }, 5 * 60 * 1000);
+
+      console.log(`Password reset OTP sent to ${phone}: ${otp}`);
+
+      res.status(200).json({
+        success: true,
+        message: 'Password reset OTP sent successfully',
+        data: { phone }
+      });
+
+    } catch (smsError) {
+      console.error('SMS sending failed:', smsError);
+      
+      // Fallback to hardcoded OTP for development/testing
+      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+        const fallbackOtp = '111111';
+        otpStore[phone] = { otp: fallbackOtp, userType, purpose: 'password_reset' };
+        
+        console.log(`Fallback password reset OTP for ${phone}: ${fallbackOtp}`);
+        
+        res.status(200).json({
+          success: true,
+          message: 'Password reset OTP sent successfully (fallback mode)',
+          data: { phone }
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to send OTP. Please try again later.'
+        });
+      }
+    }
+
+  } catch (error) {
+    console.error('Send password reset OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Verify password reset OTP and reset password
+const resetPassword = async (req, res) => {
+  try {
+    const { phone, otp, newPassword } = req.body;
+
+    if (!phone || !otp || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number, OTP, and new password are required'
+      });
+    }
+
+    // Check if OTP exists and matches
+    const storedOtpData = otpStore[phone];
+    if (!storedOtpData || storedOtpData.otp !== otp || storedOtpData.purpose !== 'password_reset') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    // Find user based on stored user type
+    let user;
+    if (storedOtpData.userType === 'company') {
+      user = await Company.findOne({ phone });
+    } else {
+      user = await Employee.findOne({ phone });
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Update user password
+    user.password = hashedPassword;
+    await user.save();
+
+    // Clear OTP from store
+    delete otpStore[phone];
+
+    console.log(`Password reset successful for ${phone}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   sendOtp,
   verifyOtp,
@@ -780,5 +972,7 @@ module.exports = {
   saveBusinessDetails,
   getBusinessDetails,
   uploadLogo,
-  getLogo
+  getLogo,
+  sendPasswordResetOtp,
+  resetPassword
 };

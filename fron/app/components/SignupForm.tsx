@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import axios from 'axios'
 import { API_BASE_URL } from '../utils/config'
+import { getOtpMessage } from '../utils/environment'
 
 interface SignupFormProps {
   onSuccess?: () => void
@@ -93,6 +95,15 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full">
       <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">Sign Up</h2>
       
+      <div className="text-center mb-6">
+        <p className="text-sm text-gray-600">
+          Already have an account?{' '}
+          <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">
+            Sign in here
+          </Link>
+        </p>
+      </div>
+      
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
@@ -144,7 +155,10 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
               required
             />
             <p className="text-sm text-gray-500 mt-2">
-              OTP sent to {phone} (Demo OTP: 111111)
+              {getOtpMessage(phone).main}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {getOtpMessage(phone).sub}
             </p>
           </div>
           <button
