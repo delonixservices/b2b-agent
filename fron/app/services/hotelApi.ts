@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_PATH || 'http://localhost:3334';
+import { API_BASE_URL } from '../utils/config';
 
 // Interfaces for hotel data
 export interface HotelPackage {

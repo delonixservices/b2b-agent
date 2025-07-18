@@ -7,6 +7,7 @@ import axios from 'axios'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import { Eye, EyeOff, CheckCircle } from 'lucide-react'
+import { API_BASE_URL } from '../utils/config'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,7 +24,7 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/login`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
         phone,
         password
       })

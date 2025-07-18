@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import axios from 'axios'
+import { API_BASE_URL } from '../utils/config'
 
 interface SignupFormProps {
   onSuccess?: () => void
@@ -25,7 +26,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/send-otp`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/send-otp`, {
         phone
       })
 
@@ -45,7 +46,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/verify-otp`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
         phone,
         otp
       })
@@ -67,7 +68,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
     setError('')
 
     try {
-      const response = await axios.post(`${process.env.NEXT_PUBLIC_API_PATH}/api/auth/complete-signup`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/complete-signup`, {
         tempToken,
         name,
         agencyName,
