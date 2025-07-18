@@ -41,6 +41,7 @@ async function sendSMSViaFlow(mobile, templateKey, values = []) {
     );
 
     console.log(`SMS [${templateKey}] sent to ${mobile}`, response.data);
+
     return response.data;
   } catch (error) {
     console.error(` Error sending SMS [${templateKey}] to ${mobile}:`, error?.response?.data || error.message);

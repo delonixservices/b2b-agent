@@ -34,7 +34,11 @@ const companySchema = new mongoose.Schema({
     balance: { type: Number, default: 0, min: 0 }, // Current wallet balance
     currency: { type: String, default: 'INR' }, // Currency for wallet
     lastUpdated: { type: Date, default: Date.now } // Last wallet update timestamp
-  }
+  },
+  // OTP fields for authentication
+  otp: { type: String }, // Store OTP in user document
+  otpSentAt: { type: Date }, // Timestamp when OTP was sent
+  otpPurpose: { type: String, enum: ['signup', 'login', 'password_reset'] } // Purpose of OTP
 }, {
   timestamps: true
 });
@@ -48,7 +52,11 @@ const employeeSchema = new mongoose.Schema({
   employeeNumber: { type: Number, required: true }, // Employee number within company
   company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true }, // Reference to company
   companyNumber: { type: Number, required: true }, // Company number for easy reference
-  isActive: { type: Boolean, default: true }
+  isActive: { type: Boolean, default: true },
+  // OTP fields for authentication
+  otp: { type: String }, // Store OTP in user document
+  otpSentAt: { type: Date }, // Timestamp when OTP was sent
+  otpPurpose: { type: String, enum: ['signup', 'login', 'password_reset'] } // Purpose of OTP
 }, {
   timestamps: true
 });

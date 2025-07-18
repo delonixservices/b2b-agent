@@ -4,8 +4,7 @@ const mongoose = require('mongoose');
 const { Company, Employee } = require('../models/user');
 const { sendLoginOTP, sendPasswordResetOTP } = require('../services/smsService');
 
-// In-memory store for OTPs (for demo purposes)
-const otpStore = {};
+// OTP store is now handled in the database
 
 // Generate unique company number
 const generateCompanyNumber = async () => {
@@ -64,15 +63,18 @@ const sendOtp = async (req, res) => {
 
     // Generate and send dynamic OTP via SMS
     try {
-      const { otp, response } = await sendLoginOTP(phone);
+      const { otp, response } = await sendLoginOTP("91" + phone);
       
-      // Store OTP in memory store with purpose
-      otpStore[phone] = { otp, purpose: 'signup' };
-      
-      // Set OTP expiration (5 minutes)
-      setTimeout(() => {
-        delete otpStore[phone];
-      }, 5 * 60 * 1000);
+      // Create temporary company with phone number and store OTP in database
+      const tempCompany = new Company({ 
+        phone,
+        name: 'Temporary Company',
+        password: 'temp_password_123',
+        otp: otp,
+        otpSentAt: new Date(),
+        otpPurpose: 'signup'
+      });
+      await tempCompany.save();
 
       console.log(`Dynamic OTP sent to ${phone}: ${otp}`);
 
@@ -88,10 +90,19 @@ const sendOtp = async (req, res) => {
       // Fallback to hardcoded OTP for development/testing
       if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
         const fallbackOtp = '111111';
-        otpStore[phone] = { otp: fallbackOtp, purpose: 'signup' };
+        
+        // Create temporary company with fallback OTP
+        const tempCompany = new Company({ 
+          phone,
+          name: 'Temporary Company',
+          password: 'temp_password_123',
+          otp: fallbackOtp,
+          otpSentAt: new Date(),
+          otpPurpose: 'signup'
+        });
+        await tempCompany.save();
         
         console.log(`Fallback OTP for ${phone}: ${fallbackOtp}`);
-        console.log('OTP Store after storing:', otpStore);
         
         res.status(200).json({
           success: true,
@@ -127,39 +138,46 @@ const verifyOtp = async (req, res) => {
       });
     }
 
-    // Check if OTP matches (handle both string and object formats)
-    const storedOtp = otpStore[phone];
-    console.log('Verifying OTP for phone:', phone);
-    console.log('Stored OTP:', storedOtp);
-    console.log('Received OTP:', otp);
-    console.log('OTP Store:', otpStore);
+    // Find temporary company with OTP in database
+    const tempCompany = await Company.findOne({ 
+      phone, 
+      name: 'Temporary Company',
+      otpPurpose: 'signup'
+    });
     
-    if (!storedOtp) {
+    console.log('Verifying OTP for phone:', phone);
+    console.log('Found temp company:', tempCompany ? 'Yes' : 'No');
+    
+    if (!tempCompany) {
       return res.status(400).json({
         success: false,
         message: 'OTP not found or expired'
       });
     }
 
-    // Handle both old string format and new object format
-    const storedOtpValue = typeof storedOtp === 'string' ? storedOtp : storedOtp.otp;
-    console.log('Stored OTP Value:', storedOtpValue);
-    console.log('Comparing:', storedOtpValue, '===', otp, '=', storedOtpValue === otp);
+    // Check OTP expiration (5 minutes)
+    const otpAge = Date.now() - tempCompany.otpSentAt.getTime();
+    const otpExpired = otpAge > 5 * 60 * 1000; // 5 minutes
     
-    if (storedOtpValue !== otp) {
+    if (otpExpired) {
+      // Delete expired temporary company
+      await Company.findByIdAndDelete(tempCompany._id);
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new OTP.'
+      });
+    }
+
+    console.log('Stored OTP:', tempCompany.otp);
+    console.log('Received OTP:', otp);
+    console.log('Comparing:', tempCompany.otp, '===', otp, '=', tempCompany.otp === otp);
+    
+    if (tempCompany.otp !== otp) {
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP'
       });
     }
-
-    // Create temporary company with phone number and temporary name/password
-    const tempCompany = new Company({ 
-      phone,
-      name: 'Temporary Company',
-      password: 'temp_password_123'
-    });
-    await tempCompany.save();
 
     // Generate temporary token for completing signup
     const tempToken = jwt.sign(
@@ -168,8 +186,11 @@ const verifyOtp = async (req, res) => {
       { expiresIn: '10m' }
     );
 
-    // Clear OTP from store
-    delete otpStore[phone];
+    // Clear OTP from database
+    tempCompany.otp = null;
+    tempCompany.otpSentAt = null;
+    tempCompany.otpPurpose = null;
+    await tempCompany.save();
     res.status(200).json({
       success: true,
       message: 'OTP verified successfully',
@@ -848,15 +869,13 @@ const sendPasswordResetOtp = async (req, res) => {
 
     // Generate and send password reset OTP via SMS
     try {
-      const { otp, response } = await sendPasswordResetOTP(phone);
+      const { otp, response } = await sendPasswordResetOTP("91" + phone);
       
-      // Store OTP in memory store with user type
-      otpStore[phone] = { otp, userType, purpose: 'password_reset' };
-      
-      // Set OTP expiration (5 minutes)
-      setTimeout(() => {
-        delete otpStore[phone];
-      }, 5 * 60 * 1000);
+      // Store OTP in user document
+      user.otp = otp;
+      user.otpSentAt = new Date();
+      user.otpPurpose = 'password_reset';
+      await user.save();
 
       console.log(`Password reset OTP sent to ${phone}: ${otp}`);
 
@@ -872,7 +891,12 @@ const sendPasswordResetOtp = async (req, res) => {
       // Fallback to hardcoded OTP for development/testing
       if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
         const fallbackOtp = '111111';
-        otpStore[phone] = { otp: fallbackOtp, userType, purpose: 'password_reset' };
+        
+        // Store fallback OTP in user document
+        user.otp = fallbackOtp;
+        user.otpSentAt = new Date();
+        user.otpPurpose = 'password_reset';
+        await user.save();
         
         console.log(`Fallback password reset OTP for ${phone}: ${fallbackOtp}`);
         
@@ -910,21 +934,13 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Check if OTP exists and matches
-    const storedOtpData = otpStore[phone];
-    if (!storedOtpData || storedOtpData.otp !== otp || storedOtpData.purpose !== 'password_reset') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired OTP'
-      });
-    }
+    // Find user (company or employee)
+    let user = await Company.findOne({ phone });
+    let userType = 'company';
 
-    // Find user based on stored user type
-    let user;
-    if (storedOtpData.userType === 'company') {
-      user = await Company.findOne({ phone });
-    } else {
+    if (!user) {
       user = await Employee.findOne({ phone });
+      userType = 'employee';
     }
 
     if (!user) {
@@ -934,15 +950,40 @@ const resetPassword = async (req, res) => {
       });
     }
 
+    // Check if OTP exists and matches
+    if (!user.otp || user.otp !== otp || user.otpPurpose !== 'password_reset') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    // Check OTP expiration (5 minutes)
+    const otpAge = Date.now() - user.otpSentAt.getTime();
+    const otpExpired = otpAge > 5 * 60 * 1000; // 5 minutes
+    
+    if (otpExpired) {
+      // Clear expired OTP
+      user.otp = null;
+      user.otpSentAt = null;
+      user.otpPurpose = null;
+      await user.save();
+      
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new OTP.'
+      });
+    }
+
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     
-    // Update user password
+    // Update user password and clear OTP
     user.password = hashedPassword;
+    user.otp = null;
+    user.otpSentAt = null;
+    user.otpPurpose = null;
     await user.save();
-
-    // Clear OTP from store
-    delete otpStore[phone];
 
     console.log(`Password reset successful for ${phone}`);
 
