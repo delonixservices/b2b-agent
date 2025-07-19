@@ -54,6 +54,8 @@ interface HotelPackage {
     market_rate?: number
     market_rate_currency?: string
   }>
+  service_component?: number;
+  gst?: number;
 }
 
 interface HotelDetails {
@@ -160,12 +162,37 @@ function HotelDetailsContent() {
     return `${hotel.city}, ${hotel.location?.stateProvince || hotel.state || ''}`
   }
 
+  const getRateBreakdown = (pkg: HotelPackage) => {
+    const breakdown = [];
+    
+    if (pkg.base_amount && pkg.base_amount > 0) {
+      breakdown.push(`Base: ${formatPrice(pkg.base_amount)}`);
+    }
+    
+    if (pkg.service_component && pkg.service_component > 0) {
+      breakdown.push(`Service: ${formatPrice(pkg.service_component)}`);
+    }
+    
+    if (pkg.gst && pkg.gst > 0) {
+      breakdown.push(`GST: ${formatPrice(pkg.gst)}`);
+    }
+    
+    return breakdown;
+  }
+
   const getPackagePrice = (pkg: HotelPackage) => {
-    // Use chargeable_rate_with_tax_excluded as primary price
-    // If that's 0, fall back to room_rate, then base_amount
-    return (pkg.chargeable_rate_with_tax_excluded || 0) > 0 ? (pkg.chargeable_rate_with_tax_excluded || 0) :
-           (pkg.room_rate || 0) > 0 ? (pkg.room_rate || 0) :
-           (pkg.base_amount || 0) > 0 ? (pkg.base_amount || 0) : 0
+    // Use chargeable_rate as primary price (this includes all taxes and fees)
+    // If that's not available, fall back to base_amount + service_component + gst
+    if (pkg.chargeable_rate && pkg.chargeable_rate > 0) {
+      return pkg.chargeable_rate;
+    }
+    
+    // Calculate total from components if chargeable_rate is not available
+    const baseAmount = pkg.base_amount || 0;
+    const serviceComponent = pkg.service_component || 0;
+    const gst = pkg.gst || 0;
+    
+    return baseAmount + serviceComponent + gst;
   }
 
   const getPackageName = (pkg: HotelPackage) => {
@@ -223,11 +250,21 @@ function HotelDetailsContent() {
         transaction_identifier: transactionIdentifier || undefined
       }
 
-      console.log('Search packages payload:', searchPayload)
-      console.log('Transaction identifier from URL:', transactionIdentifier)
-      console.log('Using authentication token:', token ? 'Token present' : 'No token')
+      console.log('🔍 Hotel ID from URL:', hotelId)
+      console.log('📤 Search packages payload:', searchPayload)
+      console.log('🔑 Transaction identifier from URL:', transactionIdentifier)
+      console.log('🔐 Using authentication token:', token ? 'Token present' : 'No token')
 
       const data: SearchResponse = await hotelApi.searchPackages(searchPayload, token!)
+      
+      console.log('📥 Packages API response:', {
+        hasData: !!data.data,
+        hasHotel: !!data.data?.hotel,
+        hotelId: data.data?.hotel?.id,
+        hotelMongoId: data.data?.hotel?._id,
+        packagesCount: data.data?.hotel?.rates?.packages?.length || 0,
+        transactionIdentifier: data.data?.transaction_identifier
+      })
       
       if (data.data && data.data.hotel) {
         setHotel(data.data.hotel)
@@ -476,7 +513,17 @@ function HotelDetailsContent() {
                         <div className="text-3xl font-bold text-blue-600 mb-2">
                           {formatPrice(getPackagePrice(pkg))}
                         </div>
-                        <div className="text-sm text-gray-500 mb-3">per night</div>
+                        <div className="text-sm text-gray-500 mb-2">per night</div>
+                        
+                        {/* Rate Breakdown */}
+                        {getRateBreakdown(pkg).length > 0 && (
+                          <div className="text-xs text-gray-500 mb-2 text-right">
+                            {getRateBreakdown(pkg).map((item, idx) => (
+                              <div key={idx}>{item}</div>
+                            ))}
+                          </div>
+                        )}
+                        
                         {(pkg.markup_amount || 0) > 0 && (
                           <div className="text-xs text-gray-500 mb-3">
                             +{formatPrice(pkg.markup_amount || 0)} markup applied

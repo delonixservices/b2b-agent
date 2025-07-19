@@ -24,6 +24,15 @@ export default function HotelList({
   loadedBatches = 0,
   totalBatches = 0
 }: HotelListProps) {
+  
+  // Debug logging
+  console.log('HotelList received:', {
+    hotelsCount: hotels.length,
+    loading,
+    pollingStatus,
+    totalHotels,
+    firstHotel: hotels[0]
+  })
   if (loading && hotels.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -47,6 +56,8 @@ export default function HotelList({
   const remainingBatches = totalBatches - loadedBatches
   const hotelsLoaded = hotels.length
   const hotelsPerBatch = totalBatches > 0 ? Math.ceil(totalHotels / totalBatches) : 0
+
+  console.log('🔄 Rendering hotels:', hotels.length)
 
   return (
     <div className="space-y-4">

@@ -100,14 +100,12 @@ export interface SearchResponse {
       minPrice: number
       maxPrice: number
     }
-    pagination?: {
-      currentHotelsCount: number
-      totalHotelsCount: number
-      totalPages: number
-      pollingStatus: string
-      page: number
-      perPage: number
-    }
+    currentHotelsCount?: number
+    totalHotelsCount?: number
+    totalPages?: number
+    status?: string
+    page?: number
+    perPage?: number
     transaction_identifier?: string
   }
 } 

@@ -27,6 +27,12 @@ export interface HotelPackage {
       value?: number;
     };
   };
+  hotel_fees?: {
+    [key: string]: {
+      currency: string;
+      value: number;
+    };
+  };
   indicative_market_rates?: Array<{
     market_rate_supplier?: string;
     market_rate?: number;
@@ -51,6 +57,8 @@ export interface HotelPackage {
   client_commission_percentage?: number;
   guest_discount_percentage?: number;
   guest_discount_with_tax_excluded_percentage?: number;
+  daily_number_of_units?: number | null;
+  created_at?: string;
 }
 
 export interface HotelDetails {
@@ -136,33 +144,31 @@ export interface SearchResponse {
       minPrice: number;
       maxPrice: number;
     };
-    pagination: {
-      currentHotelsCount: number;
-      totalHotelsCount: number;
-      totalPages: number;
-      pollingStatus: string;
-      page: number;
-      perPage: number;
-    };
+    currentHotelsCount: number;
+    totalHotelsCount: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    status: string;
     transaction_identifier?: string;
   };
 }
 
 export interface BookingPolicyRequest {
-  transaction_id: string;
+  hotelId: string;
+  bookingKey: string;
   search: {
-    adult_count: number;
-    check_in_date: string;
     check_out_date: string;
     child_count: number;
-    currency?: string;
-    hotel_id_list?: string[];
-    locale?: string;
     room_count: number;
-    source_market?: string;
+    source_market: string;
+    currency: string;
+    locale: string;
+    hotel_id_list: string[];
+    adult_count: number;
+    check_in_date: string;
   };
-  bookingKey: string;
-  hotelId: string;
+  transaction_id: string;
 }
 
 export interface BookingPolicyResponse {
@@ -296,14 +302,12 @@ export interface SearchHotelsByCityResponse {
       minPrice: number;
       maxPrice: number;
     };
-    pagination: {
-      currentHotelsCount: number;
-      totalHotelsCount: number;
-      totalPages: number;
-      pollingStatus: string;
-      page: number;
-      perPage: number;
-    };
+    currentHotelsCount: number;
+    totalHotelsCount: number;
+    page: number;
+    perPage: number;
+    totalPages: number;
+    status: string;
     transaction_identifier?: string;
   };
 }
@@ -468,14 +472,12 @@ export const hotelApi = {
               region: {},
               hotels: [],
               price: { minPrice: 0, maxPrice: 0 },
-              pagination: {
-                currentHotelsCount: 0,
-                totalHotelsCount: 0,
-                totalPages: 0,
-                pollingStatus: 'complete',
-                page: 1,
-                perPage: 50
-              },
+              currentHotelsCount: 0,
+              totalHotelsCount: 0,
+              totalPages: 0,
+              status: 'complete',
+              page: 1,
+              perPage: 50,
               transaction_identifier: ''
             }
           };

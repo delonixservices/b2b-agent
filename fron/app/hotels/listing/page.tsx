@@ -9,33 +9,77 @@ import ListingSearchBar from './components/ListingSearchBar'
 import HotelFilters from './components/HotelFilters'
 import HotelList from './components/HotelList'
 import SortBar from './components/SortBar'
+import DebugInfo from './components/DebugInfo'
+import TestHotelDisplay from './components/TestHotelDisplay'
 import { Hotel, Filters, SearchResponse } from './types/hotel'
 import { hotelApi, HotelDetails } from '../../services/hotelApi'
 import { splitHotelIdsIntoBatches } from '../../utils/hotelUtils'
 
 // Helper function to convert HotelDetails to Hotel
-const convertHotelDetailsToHotel = (hotelDetails: HotelDetails): Hotel => {
+const convertHotelDetailsToHotel = (hotelDetails: any): Hotel => {
+  console.log('🔄 Converting hotel details:', hotelDetails);
+  
+  // Handle Mongoose document structure - extract from _doc field
+  let hotel = hotelDetails;
+  if (hotelDetails._doc) {
+    hotel = hotelDetails._doc;
+    console.log('📄 Extracted from _doc field');
+  } else if (hotelDetails.$__ && hotelDetails.$__.pathsToScopes) {
+    // Handle the complex Mongoose structure with pathsToScopes
+    const pathsToScopes = hotelDetails.$__.pathsToScopes;
+    const ratesPath = pathsToScopes['rates.packages'];
+    if (ratesPath) {
+      hotel = {
+        ...hotelDetails._doc,
+        rates: {
+          packages: ratesPath.rates?.packages || []
+        }
+      };
+      console.log('🔧 Extracted from pathsToScopes structure');
+    }
+  } else if (hotelDetails.$__ && hotelDetails.$__.getters) {
+    // Handle the getters structure
+    const getters = hotelDetails.$__.getters;
+    if (getters.rates && getters.rates.packages) {
+      hotel = {
+        ...hotelDetails._doc,
+        rates: {
+          packages: getters.rates.packages
+        }
+      };
+      console.log('🔧 Extracted from getters structure');
+    }
+  }
+  
+  console.log('🏨 Processed hotel data:', {
+    id: hotel.id,
+    _id: hotel._id,
+    hotelId: hotel.hotelId,
+    name: hotel.name,
+    packagesCount: hotel.rates?.packages?.length || 0
+  });
+  
   return {
-    _id: hotelDetails.id,
-    id: hotelDetails.id,
-    hotelId: hotelDetails.hotelId,
-    name: hotelDetails.name,
-    originalName: hotelDetails.originalName,
-    starRating: hotelDetails.starRating || 0,
-    address: hotelDetails.address,
-    city: hotelDetails.city || '',
-    state: hotelDetails.state,
-    stateProvince: hotelDetails.state,
-    country: hotelDetails.location?.country || '',
-    countryCode: hotelDetails.location?.countryCode,
-    image: hotelDetails.image,
-    imageDetails: hotelDetails.imageDetails ? {
-      images: hotelDetails.imageDetails.images || [],
-      count: hotelDetails.imageDetails.count || 0
+    _id: hotel._id || hotel.id, // Use MongoDB _id first, fallback to id
+    id: hotel.id,
+    hotelId: hotel._id || hotel.hotelId, // Use MongoDB _id for hotelId field
+    name: hotel.name,
+    originalName: hotel.originalName,
+    starRating: hotel.starRating || 0,
+    address: hotel.location?.address || hotel.address,
+    city: hotel.location?.city || hotel.city || '',
+    state: hotel.location?.stateProvince || hotel.state,
+    stateProvince: hotel.location?.stateProvince || hotel.state,
+    country: hotel.location?.country || '',
+    countryCode: hotel.location?.countryCode,
+    image: hotel.image,
+    imageDetails: hotel.imageDetails ? {
+      images: hotel.imageDetails.images || [],
+      count: hotel.imageDetails.count || 0
     } : undefined,
-    amenities: hotelDetails.amenities || [],
+    amenities: hotel.amenities || [],
     rates: {
-      packages: hotelDetails.rates.packages.map(pkg => ({
+      packages: (hotel.rates?.packages || []).map((pkg: any) => ({
         base_amount: pkg.base_amount || 0,
         chargeable_rate: pkg.chargeable_rate || 0,
         markup_amount: pkg.markup_amount || 0,
@@ -64,10 +108,10 @@ const convertHotelDetailsToHotel = (hotelDetails: HotelDetails): Hotel => {
         } : undefined
       }))
     },
-    description: hotelDetails.moreDetails?.description,
-    location: hotelDetails.location,
-    moreDetails: hotelDetails.moreDetails,
-    policy: hotelDetails.policy,
+    description: hotel.moreDetails?.description,
+    location: hotel.location,
+    moreDetails: hotel.moreDetails,
+    policy: hotel.policy,
     dailyRates: {
       highest: 0,
       lowest: 0
@@ -99,6 +143,7 @@ function HotelListingPageContent() {
   const [hotelIdBatches, setHotelIdBatches] = useState<string[][]>([])
   const [currentBatchIndex, setCurrentBatchIndex] = useState(0)
   const [hasMoreBatches, setHasMoreBatches] = useState(false)
+  const [apiStatus, setApiStatus] = useState('in-progress')
 
   // Add state to track if city fallback is used and city name
   const [cityFallback, setCityFallback] = useState<{used: boolean, city: string}>({used: false, city: ''})
@@ -113,6 +158,17 @@ function HotelListingPageContent() {
     const children = searchParams.get('children')
     const childrenAges = searchParams.get('childrenAges')
     const hotelIds = searchParams.get('hotelIds')
+
+    console.log('🔍 Extracting search params:', {
+      area,
+      checkIn,
+      checkOut,
+      rooms,
+      adults,
+      children,
+      childrenAges,
+      hotelIds
+    })
 
     if (!area || !checkIn || !checkOut || !rooms || !adults) {
       throw new Error('Missing required search parameters')
@@ -130,7 +186,7 @@ function HotelListingPageContent() {
       extractedHotelIds = areaData.id.split(',').filter((id: string) => id.trim() !== '')
     }
 
-    return {
+    const params = {
       area: areaData,
       checkIn,
       checkOut,
@@ -140,6 +196,9 @@ function HotelListingPageContent() {
       childrenAges: childrenAges ? JSON.parse(decodeURIComponent(childrenAges)) : [],
       hotelIds: extractedHotelIds
     }
+
+    console.log('✅ Extracted search params:', params)
+    return params
   }
 
   // Build room details for API
@@ -230,6 +289,9 @@ function HotelListingPageContent() {
       }
       const token = localStorage.getItem('token')
 
+      console.log('📤 Search payload:', JSON.stringify(searchPayload, null, 2))
+      console.log('🔑 Token available:', !!token)
+
       // Check if we should do parallel city search (for hotel or POI types)
       const shouldDoCitySearch = (params.hotelIds && params.hotelIds.length === 1) || 
                                 params.area.type === 'hotel' || 
@@ -276,16 +338,118 @@ function HotelListingPageContent() {
 
       console.log(`🚀 Making ${promises.length} parallel API calls...`)
       const results = await Promise.allSettled(promises)
+      console.log('📥 API results:', results.map((result, index) => ({
+        index,
+        status: result.status,
+        success: result.status === 'fulfilled' ? result.value.success : null,
+        hotelsCount: result.status === 'fulfilled' ? result.value.data?.hotels?.length : null,
+        responseKeys: result.status === 'fulfilled' ? Object.keys(result.value.data || {}) : null
+      })))
       
       // Process main search results
       const mainSearchResult = results[0]
       let mainHotels: Hotel[] = []
       let mainSuccess = false
       
-      if (mainSearchResult.status === 'fulfilled' && mainSearchResult.value.success && mainSearchResult.value.data.hotels.length > 0) {
+      console.log('🔍 Main search result details:', {
+        status: mainSearchResult.status,
+        success: mainSearchResult.status === 'fulfilled' ? mainSearchResult.value.success : null,
+        hasData: mainSearchResult.status === 'fulfilled' ? !!mainSearchResult.value.data : null,
+        hasHotels: mainSearchResult.status === 'fulfilled' ? !!mainSearchResult.value.data?.hotels : null,
+        hotelsLength: mainSearchResult.status === 'fulfilled' ? mainSearchResult.value.data?.hotels?.length : null,
+        responseStructure: mainSearchResult.status === 'fulfilled' ? Object.keys(mainSearchResult.value) : null
+      })
+      
+      // Check if the response has hotels data, regardless of success field
+      const hasHotelsData = mainSearchResult.status === 'fulfilled' && 
+                           mainSearchResult.value.data?.hotels?.length > 0;
+      
+      console.log('🔍 API Response Analysis:', {
+        status: mainSearchResult.status,
+        hasData: mainSearchResult.status === 'fulfilled' ? !!mainSearchResult.value.data : false,
+        hasHotels: mainSearchResult.status === 'fulfilled' ? !!mainSearchResult.value.data?.hotels : false,
+        hotelsLength: mainSearchResult.status === 'fulfilled' ? mainSearchResult.value.data?.hotels?.length : 0,
+        apiStatus: mainSearchResult.status === 'fulfilled' ? mainSearchResult.value.data?.status : null,
+        hasHotelsData
+      });
+      
+      if (hasHotelsData) {
         console.log(`✅ Main search successful! Found ${mainSearchResult.value.data.hotels.length} hotels`)
-        mainHotels = mainSearchResult.value.data.hotels.map(convertHotelDetailsToHotel)
-        mainSuccess = true
+        
+        // Log the first hotel to see its structure
+        const firstHotel = mainSearchResult.value.data.hotels[0] as any;
+        console.log('🔍 First hotel structure:', {
+          hasDoc: !!(firstHotel as any)._doc,
+          hasDollarUnderscore: !!(firstHotel as any).$__,
+          hasPathsToScopes: !!(firstHotel as any).$__?.pathsToScopes,
+          hotelKeys: Object.keys(firstHotel),
+          hotelType: typeof firstHotel
+        });
+        
+        // Try to access the hotel data directly
+        if ((firstHotel as any)._doc) {
+          console.log('📄 Found _doc field:', Object.keys((firstHotel as any)._doc));
+        }
+        if ((firstHotel as any).$__) {
+          console.log('🔧 Found $__ field:', Object.keys((firstHotel as any).$__));
+        }
+        
+        try {
+          mainHotels = mainSearchResult.value.data.hotels.map(convertHotelDetailsToHotel)
+          console.log('Converted hotel data:', JSON.stringify(mainHotels[0], null, 2))
+          mainSuccess = true
+        } catch (conversionError) {
+          console.error('❌ Error converting hotel data:', conversionError)
+          // Try to create a basic hotel object as fallback
+          mainHotels = mainSearchResult.value.data.hotels.map((hotel: any) => {
+            const hotelData = hotel._doc || hotel;
+            return {
+              _id: hotelData.id || hotelData._id,
+              id: hotelData.id,
+              hotelId: hotelData.hotelId,
+              name: hotelData.name || 'Unknown Hotel',
+              originalName: hotelData.originalName,
+              starRating: hotelData.starRating || 0,
+              address: hotelData.location?.address || hotelData.address || '',
+              city: hotelData.location?.city || hotelData.city || '',
+              state: hotelData.location?.stateProvince || hotelData.state || '',
+              stateProvince: hotelData.location?.stateProvince || hotelData.state || '',
+              country: hotelData.location?.country || '',
+              countryCode: hotelData.location?.countryCode,
+              image: hotelData.image,
+              imageDetails: hotelData.imageDetails,
+              amenities: hotelData.amenities || [],
+              rates: {
+                packages: (hotelData.rates?.packages || []).map((pkg: any) => ({
+                  base_amount: pkg.base_amount || 0,
+                  chargeable_rate: pkg.chargeable_rate || 0,
+                  markup_amount: pkg.markup_amount || 0,
+                  room_details: pkg.room_details ? {
+                    room_type: pkg.room_details.room_type || '',
+                    food: pkg.room_details.food || '',
+                    non_refundable: pkg.room_details.non_refundable || false,
+                    description: pkg.room_details.description,
+                    supplier_description: pkg.room_details.supplier_description
+                  } : undefined,
+                  service_component: pkg.service_component || 0,
+                  gst: pkg.gst,
+                  room_rate: pkg.room_rate,
+                  chargeable_rate_with_tax_excluded: pkg.chargeable_rate_with_tax_excluded
+                }))
+              },
+              description: hotelData.moreDetails?.description,
+              location: hotelData.location,
+              moreDetails: hotelData.moreDetails,
+              policy: hotelData.policy,
+              dailyRates: {
+                highest: 0,
+                lowest: 0
+              }
+            }
+          })
+          console.log('🔄 Used fallback conversion for hotels')
+          mainSuccess = true
+        }
         
         if (!isLoadMore && mainSearchResult.value.data.price) {
           setPriceRange({ min: mainSearchResult.value.data.price.minPrice, max: mainSearchResult.value.data.price.maxPrice })
@@ -294,8 +458,16 @@ function HotelListingPageContent() {
         if (mainSearchResult.value.data.transaction_identifier) {
           setTransactionIdentifier(mainSearchResult.value.data.transaction_identifier)
         }
+        // Set API status from response
+        if (mainSearchResult.value.data.status) {
+          setApiStatus(mainSearchResult.value.data.status)
+          console.log('📊 API Status set to:', mainSearchResult.value.data.status)
+        }
       } else {
         console.log(`❌ Main search failed or no results`)
+        if (mainSearchResult.status === 'rejected') {
+          console.error('Main search error:', mainSearchResult.reason)
+        }
       }
 
       // Process city search results (if it was made)
@@ -339,9 +511,20 @@ function HotelListingPageContent() {
       }
 
       // Update state
+      console.log('Setting hotels state:', {
+        isLoadMore,
+        finalHotelsCount: finalHotels.length,
+        finalHotels: finalHotels.map(h => ({ id: h.id, name: h.name }))
+      })
+      
       if (isLoadMore) {
-        setHotels(prev => [...prev, ...finalHotels])
+        setHotels(prev => {
+          const newHotels = [...prev, ...finalHotels];
+          console.log('🔄 Updated hotels (load more):', newHotels.length);
+          return newHotels;
+        })
       } else {
+        console.log('🔄 Setting hotels (initial):', finalHotels.length);
         setHotels(finalHotels)
       }
       
@@ -355,6 +538,13 @@ function HotelListingPageContent() {
         setTotalHotels(0)
         setError(null)
       }
+
+      console.log('✅ Search completed:', {
+        finalHotelsCount: finalHotels.length,
+        usedCityFallback,
+        mainSuccess,
+        citySuccess
+      })
 
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Search failed'
@@ -452,6 +642,12 @@ function HotelListingPageContent() {
 
   // Sort hotels client-side for now
   const getSortedHotels = () => {
+    console.log('🔄 Getting sorted hotels:', {
+      hotelsCount: hotels.length,
+      sort,
+      hotels: hotels.map(h => ({ id: h.id, name: h.name }))
+    })
+    
     let sorted = [...hotels]
     if (sort === 'rating_desc') {
       sorted.sort((a, b) => (b.starRating || 0) - (a.starRating || 0))
@@ -460,6 +656,12 @@ function HotelListingPageContent() {
     } else if (sort === 'price_asc') {
       sorted.sort((a, b) => getMinPrice(a) - getMinPrice(b))
     }
+    
+    console.log('✅ Sorted hotels:', {
+      sortedCount: sorted.length,
+      sorted: sorted.map(h => ({ id: h.id, name: h.name }))
+    })
+    
     return sorted
   }
 
@@ -477,8 +679,32 @@ function HotelListingPageContent() {
 
   // Initialize search on component mount
   useEffect(() => {
+    console.log('🔄 Component mounted, initializing search...')
     initializeSearch()
   }, [])
+
+  // Monitor hotels state changes
+  useEffect(() => {
+    console.log('🏨 Hotels state changed:', {
+      count: hotels.length,
+      hotels: hotels.map(h => ({ id: h.id, name: h.name })),
+      firstHotel: hotels[0] ? {
+        id: hotels[0].id,
+        name: hotels[0].name,
+        packagesCount: hotels[0].rates?.packages?.length || 0
+      } : null
+    })
+  }, [hotels])
+
+  console.log('🔄 Main page render state:', {
+    hotelsCount: hotels.length,
+    loading,
+    totalHotels,
+    hasMoreBatches,
+    currentBatchIndex,
+    hotelIdBatchesLength: hotelIdBatches.length,
+    error
+  })
 
   if (error) {
     return (
@@ -514,6 +740,12 @@ function HotelListingPageContent() {
         {/* Search Summary */}
         <SearchSummary totalHotels={totalHotels} cityFallback={cityFallback} />
 
+        {/* Debug Info */}
+        <DebugInfo hotels={hotels} loading={loading} error={error} totalHotels={totalHotels} />
+
+        {/* Test Hotel Display */}
+        <TestHotelDisplay hotels={hotels} />
+
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Filters Sidebar */}
           <HotelFilters 
@@ -537,7 +769,7 @@ function HotelListingPageContent() {
             <HotelList 
               hotels={getSortedHotels()}
               loading={loading}
-              pollingStatus={hasMoreBatches ? 'in-progress' : 'complete'}
+              pollingStatus={apiStatus}
               totalHotels={totalHotels}
               onLoadMore={loadMoreHotels}
               transactionIdentifier={transactionIdentifier}

@@ -11,6 +11,14 @@ interface HotelCardProps {
 export default function HotelCard({ hotel, transactionIdentifier }: HotelCardProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  
+  // Debug logging
+  console.log('HotelCard received hotel:', {
+    id: hotel.id,
+    name: hotel.name,
+    packagesCount: hotel.rates?.packages?.length || 0,
+    firstPackage: hotel.rates?.packages?.[0]
+  })
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -84,8 +92,16 @@ export default function HotelCard({ hotel, transactionIdentifier }: HotelCardPro
     }
 
     // Navigate to details page with all necessary parameters
-    const params = new URLSearchParams({
+    const hotelIdToUse = hotel._id || hotel.id;
+    console.log('🔍 Hotel IDs for navigation:', {
       hotelId: hotel.id,
+      hotelMongoId: hotel._id,
+      hotelIdToUse,
+      hotelName: hotel.name
+    });
+    
+    const params = new URLSearchParams({
+      hotelId: hotelIdToUse, // Use _id (MongoDB ID) for packages API, fallback to id
       hotelName: hotel.name,
       checkIn: checkIn || '',
       checkOut: checkOut || '',
@@ -110,8 +126,16 @@ export default function HotelCard({ hotel, transactionIdentifier }: HotelCardPro
 
   const handleViewDetails = () => {
     // Navigate to details page without booking (view mode)
-    const params = new URLSearchParams({
+    const hotelIdToUse = hotel._id || hotel.id;
+    console.log('🔍 Hotel IDs for view details:', {
       hotelId: hotel.id,
+      hotelMongoId: hotel._id,
+      hotelIdToUse,
+      hotelName: hotel.name
+    });
+    
+    const params = new URLSearchParams({
+      hotelId: hotelIdToUse, // Use _id (MongoDB ID) for packages API, fallback to id
       hotelName: hotel.name,
       viewMode: 'true'
     })
@@ -162,10 +186,10 @@ export default function HotelCard({ hotel, transactionIdentifier }: HotelCardPro
               {hotel.rates.packages && hotel.rates.packages.length > 0 ? (
                 <>
                   <div className="text-3xl font-extrabold text-gray-900">
-                    {Math.round(hotel.rates.packages[0].chargeable_rate || 0)}
+                    ₹{Math.round(hotel.rates.packages[0].chargeable_rate || 0)}
                   </div>
                   <div className="text-gray-500 text-base">
-                    + {Math.round((hotel.rates.packages[0].service_component || 0) + (hotel.rates.packages[0].gst || 0))} taxes & fees
+                    + ₹{Math.round((hotel.rates.packages[0].service_component || 0) + (hotel.rates.packages[0].gst || 0))} taxes & fees
                   </div>
                   <div className="text-gray-500 text-base">
                     Per Night

@@ -7,7 +7,8 @@ const { isAuth, isCompanyOrEmployee, isActive } = require('../middleware/isauth'
 // All hotel routes require authentication for company/employee access
 router.post('/suggest', isAuth, isCompanyOrEmployee, isActive, hotelController.suggest);
 router.post('/search', isAuth, isCompanyOrEmployee, isActive, hotelController.search);
-router.post('/searchHotels', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotels);
+router.post('/searchHotel', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotels);
+router.post('/searchHotels', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotelsB2B);
 router.post('/searchHotelsByCity', isAuth, isCompanyOrEmployee, isActive, hotelController.searchHotelsByCity);
 router.post('/packages', isAuth, isCompanyOrEmployee, isActive, hotelController.searchPackages);
 router.post('/bookingpolicy', isAuth, isCompanyOrEmployee, isActive, hotelController.bookingpolicy);

@@ -345,7 +345,6 @@ exports.search = async (req, res, next) => {
   console.log('=== SEARCH FUNCTION START ===');
   console.log('Request from:', req.user.type, 'ID:', req.user.id);
   console.log('Request body:', JSON.stringify(req.body, null, 2));
-  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
   
   const startTime = Date.now();
 
@@ -424,54 +423,138 @@ exports.search = async (req, res, next) => {
       console.log('Hotels after filtering:', filteredHotels.length);
     }
 
-    // Apply markup to all hotel packages
-    const hotelsWithMarkup = await Promise.all(
-      filteredHotels.map(async (hotel) => {
-        if (hotel.rates && hotel.rates.packages) {
-          const packagesWithMarkup = await Promise.all(
-            hotel.rates.packages.map(async (pkg) => {
-              try {
-                return await applyOwnerMarkup(pkg);
-              } catch (err) {
-                console.error('Error applying markup to package:', err);
-                return pkg; // Return original package if markup fails
-              }
-            })
-          );
-          return {
-            ...hotel,
-            rates: {
-              ...hotel.rates,
-              packages: packagesWithMarkup
-            }
-          };
-        }
-        return hotel;
-      })
-    );
-
     // Calculate pagination
     const pagination = calculatePagination(
-      hotelsWithMarkup.length,
+      filteredHotels.length,
       validatedData.page,
       validatedData.perPage,
       validatedData.currentHotelsCount
     );
 
-    // Get hotels for current page
-    const startIndex = currentHotelsCount || 0;
-    const endIndex = startIndex + validatedData.perPage;
-    const hotelsForPage = hotelsWithMarkup.slice(startIndex, endIndex);
+    // Validate page number
+    if (pagination.page > pagination.totalPages) {
+      return res.status(422).json({
+        message: 'Invalid page number'
+      });
+    }
 
+    // Get hotels for current page
+    const startIndex = validatedData.currentHotelsCount || 0;
+    const endIndex = startIndex + validatedData.perPage;
+    const hotelsForPage = filteredHotels.slice(startIndex, endIndex);
+
+    console.log('Hotels for current page:', hotelsForPage.length);
+
+    // Process hotels with markup and database insertion
+    let processedHotels = [];
+    let minPrice = Infinity;
+    let maxPrice = 0;
+
+    try {
+      // Insert hotels into database
+      const insertedHotels = await Hotel.insertMany(hotelsForPage);
+      console.log('Hotels inserted into database:', insertedHotels.length);
+
+      // Process each hotel with markup
+      const processedHotelsPromises = insertedHotels.map(async (hotel) => {
+        try {
+          // Keep external ID and add MongoDB ID
+          hotel.hotelId = hotel._id; // MongoDB ID for internal use
+          // hotel.id remains as external ID (e.g., "hibk")
+
+          // Process all packages for the hotel
+          const processedPackages = [];
+          let hotelMinPrice = Infinity;
+          let hotelMaxPrice = 0;
+
+          if (hotel.rates && hotel.rates.packages && Array.isArray(hotel.rates.packages)) {
+            for (const hotelPackage of hotel.rates.packages) {
+              if (!hotelPackage) {
+                console.log(`Skipping invalid package for hotel ${hotel.name}`);
+                continue;
+              }
+
+              try {
+                // Apply markup to package
+                const processedPackage = await applyOwnerMarkup(hotelPackage);
+                processedPackages.push(processedPackage);
+                
+                // Update hotel min/max prices
+                const packagePrice = processedPackage.base_amount || 0;
+                if (packagePrice < hotelMinPrice) {
+                  hotelMinPrice = packagePrice;
+                }
+                if (packagePrice > hotelMaxPrice) {
+                  hotelMaxPrice = packagePrice;
+                }
+              } catch (err) {
+                console.log(`Error applying markup to package in hotel ${hotel.name}:`, err);
+                // Add original package if markup fails
+                processedPackages.push(hotelPackage);
+              }
+            }
+          }
+
+          // Update hotel packages
+          hotel.rates = {
+            ...hotel.rates,
+            packages: processedPackages.length > 0 ? processedPackages : [{
+              base_amount: 0,
+              service_component: 0,
+              gst: 0,
+              chargeable_rate: 0
+            }]
+          };
+
+          // Update global min/max prices
+          if (hotelMinPrice < minPrice) {
+            minPrice = hotelMinPrice;
+          }
+          if (hotelMaxPrice > maxPrice) {
+            maxPrice = hotelMaxPrice;
+          }
+
+          return hotel;
+        } catch (err) {
+          console.error(`Error processing hotel ${hotel.name}:`, err);
+          return null;
+        }
+      });
+
+      // Wait for all hotels to be processed
+      const allProcessedHotels = await Promise.all(processedHotelsPromises);
+      processedHotels = allProcessedHotels.filter(hotel => hotel !== null);
+
+      // Remove MongoDB-specific fields from response
+      processedHotels = processedHotels.map(hotel => {
+        const { _id, __v, created_at, updated_at, hotelId, ...hotelData } = hotel;
+        return hotelData;
+      });
+
+      console.log('Successfully processed hotels:', processedHotels.length);
+
+    } catch (err) {
+      console.error('Error in hotel processing:', err);
+      return res.status(500).json({
+        message: 'Error in generating response!'
+      });
+    }
+
+    // Prepare response
     const response = {
       data: {
         search: data.data.search,
-        hotels: hotelsForPage,
+        region: data.data.region,
+        hotels: processedHotels,
+        price: {
+          minPrice: Math.floor(minPrice === Infinity ? 0 : minPrice),
+          maxPrice: Math.ceil(maxPrice === 0 ? 1 : maxPrice)
+        },
         currentHotelsCount: pagination.currentItemsCount,
         totalHotelsCount: pagination.totalItemsCount,
-        totalPages: pagination.totalPages,
         page: pagination.page,
         perPage: pagination.perPage,
+        totalPages: pagination.totalPages,
         status: pagination.pollingStatus,
         transaction_identifier: data.transaction_identifier
       }
@@ -480,7 +563,7 @@ exports.search = async (req, res, next) => {
     const totalTime = Date.now() - startTime;
     console.log('=== SEARCH FUNCTION COMPLETED ===');
     console.log('Total execution time:', totalTime, 'ms');
-    console.log('Hotels returned:', hotelsForPage.length);
+    console.log('Hotels returned:', processedHotels.length);
     console.log('Final response status:', pagination.pollingStatus);
 
     res.json(response);
@@ -966,7 +1049,6 @@ exports.suggest = async (req, res, next) => {
 }
 
 exports.searchPackages = async (req, res, next) => {
-  console.log('Request from:', req.user.type, 'ID:', req.user.id);
 
 const checkInDate = req.body.checkindate;
 const checkOutDate = req.body.checkoutdate;
@@ -985,18 +1067,12 @@ return res.status(400).json({
 })
 }
 
-// Try to find hotel in database first
-let hotel = await Hotel.findOne({ id: hotelId });
+const hotel = await Hotel.findById(hotelId);
 
-// If hotel doesn't exist in database, we'll create a minimal hotel object for the API call
 if (!hotel) {
-console.log(`Hotel with id ${hotelId} not found in database, will use external API directly`);
-hotel = {
-id: hotelId,
-name: `Hotel ${hotelId}` // Use hotel ID as fallback name
-};
-} else {
-console.log(`Found hotel in database: ${hotel.name} (ID: ${hotel.id})`);
+return res.status(404).json({
+'message': 'Hotel not found!!'
+});
 }
 
 let total_adult = 0;
@@ -1019,7 +1095,7 @@ const searchObj = {
 "source_market": "IN",
 "type": "hotel",
 "id": hotel.id,
-"name": hotel.name || `Hotel ${hotel.id}`,
+"name": hotel.name,
 "check_in_date": checkInDate,
 "check_out_date": checkOutDate,
 "total_adult_count": total_adult.toString(),
@@ -1032,87 +1108,30 @@ if (transaction_identifier && transaction_identifier != "undefined") {
 searchObj.transaction_identifier = transaction_identifier;
 }
 
-console.log('Hotel object:', hotel);
-console.log('Search object name field:', searchObj.name);
-
 let data;
 try {
 data = await Api.post("/search", {
 'search': searchObj
 });
 } catch (err) {
-  console.error('=== ERROR IN SEARCH PACKAGES FUNCTION ===');
-  console.error('Error details:', err);
-  
-  // Handle API errors specifically
-  if (err.name === 'APIError') {
-    console.error('API Error Details:', {
-      errorCode: err.errorCode,
-      errorMsg: err.errorMsg,
-      status: err.status
-    });
-    
-    return res.status(500).json({
-      message: 'Hotel package search service temporarily unavailable',
-      error: err.errorMsg || 'External API error',
-      errorCode: err.errorCode
-    });
-  }
-  
-  // Handle timeout errors
-  if (err.message && err.message.includes('timeout')) {
-    return res.status(504).json({
-      message: 'Hotel package search request timed out',
-      error: 'The package search request took too long to complete. Please try again.'
-    });
-  }
-  
-  // Handle network errors
-  if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
-    return res.status(503).json({
-      message: 'Hotel package search service unavailable',
-      error: 'Unable to connect to the hotel package search service. Please try again later.'
-    });
-  }
-  
-  // Generic error response
-  return res.status(500).json({
-    message: 'An error occurred while searching for hotel packages',
-    error: err.message || 'Unknown error'
-  });
+return next(err);
 }
 
-console.log('Search object:', searchObj);
-console.log('API response:', JSON.stringify(data, null, 2));
+console.log(searchObj);
 
-if (!data || !data.data) {
-console.log('No data in API response');
-console.log('Search object:', searchObj);
-console.log('API response:', data);
-return res.status(404).json({
-'message': 'Hotel not Found'
-});
+console.log(data.data.hotels[0].rates.packages);
+
+if (!data.data) {
+console.log(searchObj);
+console.log(data);
+return res.status(404).send('Hotel not Found');
 }
-
-if (!data.data.hotels || !Array.isArray(data.data.hotels) || data.data.hotels.length === 0) {
-console.log('No hotels in API response');
-console.log('API response data:', data.data);
-return res.status(404).json({
-'message': 'No hotels found in API response'
-});
-}
-
-console.log('Hotels found:', data.data.hotels.length);
-console.log('First hotel packages:', data.data.hotels[0].rates?.packages?.length || 0);
-
 // If user is directly searching hotel
-if (data.data && data.data.totalPackagesCount < 1) {
+else if (data.data && data.data.totalPackagesCount < 1) {
 console.log(`Error: Searched hotel cannot be found`);
 console.log(data);
-return res.status(404).json({
-'message': "Hotel cannot be found"
-});
-}
+return res.status(404).send("Hotel cannot be found");
+} else {
 
 // console.log(data.data.hotels[0].rates.packages);
 
@@ -1124,21 +1143,8 @@ const promiseArray = selectedHotel.rates.packages.map(async (pkg) => {
 // console.log(pkg.booking_key);
 // console.log(pkg.chargeable_rate);
 try {
-// Log original package from Java API
-console.log('=== ORIGINAL PACKAGE FROM JAVA API (searchPackages) ===');
-console.log('Hotel:', selectedHotel.name);
-console.log('Package Details:', JSON.stringify(pkg, null, 2));
-
 // addMarkup method will apply markup and other charges on hotelPackage
-const updatedPackage = await applyOwnerMarkup(pkg);
-
-// Log updated package with markup
-console.log('=== UPDATED PACKAGE WITH MARKUP (searchPackages) ===');
-console.log('Hotel:', selectedHotel.name);
-console.log('Updated Package Details:', JSON.stringify(updatedPackage, null, 2));
-console.log('=== END PACKAGE LOG (searchPackages) ===');
-
-Object.assign(pkg, updatedPackage);
+await markupService.addMarkup(pkg);
 } catch (err) {
 return res.status(500).json({
 'message': `${err}`
@@ -1151,29 +1157,13 @@ const hotelPackages = await Promise.all(promiseArray);
 
 // update hotel packages with updated rates
 selectedHotel.rates.packages = hotelPackages;
-
-// Log final packages summary
-console.log('=== FINAL PACKAGES SUMMARY ===');
-console.log('Hotel:', selectedHotel.name);
-console.log('Total Packages:', selectedHotel.rates.packages.length);
-selectedHotel.rates.packages.forEach((pkg, index) => {
-  console.log(`Package ${index + 1}:`, {
-    room_type: pkg.room_details?.room_type || pkg.room_details?.description,
-    base_amount: pkg.base_amount,
-    markup_amount: pkg.markup_amount,
-    chargeable_rate: pkg.chargeable_rate,
-    markup_details: pkg.markup_details
-  });
-});
-console.log('=== END FINAL PACKAGES SUMMARY ===');
-
 // console.log(selectedHotel.rates.packages[0]);
 // console.log(data.data.hotels[0].rates.packages)
 // add hotel to the db
 
+
 try {
-// Update or create hotel in database
-await Hotel.findOneAndUpdate({ id: hotelId }, {
+await Hotel.findByIdAndUpdate(hotelId, {
 '$set': {
 'rates.packages': data.data.hotels[0].rates.packages
 }
@@ -1183,16 +1173,22 @@ upsert: true,
 setDefaultsOnInsert: true
 });
 } catch (err) {
-console.log('Error updating hotel in database:', err);
-// Don't fail the request if database update fails
+console.log(err);
+return res.status(404).json({
+'message': 'Hotel not found!!!!'
+})
 }
+
+// Create a clean copy of the hotel data to avoid circular references
+const cleanHotel = JSON.parse(JSON.stringify(selectedHotel));
+cleanHotel.hotelId = hotel._id;
 
 const dataObj = {
 'data': {
 'search': data.data.search,
 // 'hotel': data.data.hotels[0],
 // 'hotel': hotelObj,
-'hotel': selectedHotel,
+'hotel': cleanHotel,
 'currentPackagesCount:': data.data.currentPackagesCount,
 'totalPackagesCount:': data.data.totalPackagesCount,
 'page': data.data.page,
@@ -1202,10 +1198,10 @@ const dataObj = {
 'transaction_identifier': data.transaction_identifier
 }
 }
-dataObj.data.hotel.hotelId = hotel.id;
 // console.log(dataObj);
 
 res.json(dataObj);
+}
 };
 
 exports.bookingpolicy = async (req, res, next) => {
@@ -1466,9 +1462,9 @@ exports.bookingpolicy = async (req, res, next) => {
       created_at: hotelPackage.created_at,
     };
 
-    // Apply owner markup to the formattedPackage (just like in search)
+    // Apply markup to the formattedPackage using markupService
     try {
-      await applyOwnerMarkup(formattedPackage);
+      await markupService.addMarkup(formattedPackage);
     } catch (err) {
       return res.status(500).json({
         'message': `${err}`
@@ -3439,6 +3435,404 @@ exports.searchHotelsByCity = async (req, res, next) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+/**
+ * B2B Search Hotels Function
+ * Similar to B2C searchHotels but with markup application and MongoDB insertion
+ * Uses request ID/token for authentication
+ */
+exports.searchHotelsB2B = async (req, res, next) => {
+  console.log('=== B2B SEARCH HOTELS FUNCTION START ===');
+  console.log('Request from:', req.user.type, 'ID:', req.user.id);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+  
+  const startTime = Date.now();
+
+  const details = req.body.details;
+  const area = req.body.area;
+  const checkInDate = req.body.checkindate;
+  const checkOutDate = req.body.checkoutdate;
+  const transaction_identifier = req.body.transaction_identifier;
+  const filters = req.body.filters || {};
+
+  let page = +req.body.page;
+  let perPage = +req.body.perPage;
+  let currentHotelsCount = +req.body.currentHotelsCount;
+
+  console.log('currentHotelsCount ' + currentHotelsCount);
+
+  if (!page || page < 1) {
+    page = 1;
+  }
+
+  // minimum hotels allowed = 10
+  if (!perPage || perPage < 10) {
+    perPage = 10;
+  }
+
+  // maximum hotels allowed at one time = 50
+  if (perPage > 50) {
+    return res.status(400).json({
+      'message': 'perPage should not be greater than 50'
+    });
+  }
+
+  if (!currentHotelsCount || currentHotelsCount < 0) {
+    currentHotelsCount = 0;
+  }
+
+  if (!details || !Array.isArray(details)) {
+    return res.status(400).json({
+      'message': 'Validation failed! Invalid details array'
+    });
+  }
+
+  let total_adult = 0;
+  let total_child = 0;
+  let i = 0;
+  for (let room of details) {
+    total_adult = total_adult + Number(room.adult_count);
+    if (Number(room.child_count) > 0) {
+      total_child = total_child + Number(room.child_count);
+    } else {
+      delete details[i].child_count;
+      delete details[i].children;
+    }
+    i = i + 1;
+  }
+
+  // Limit region IDs to maximum 50 to avoid Spring Boot backend issues
+  const limitedAreaId = limitRegionIds(area.id, 50);
+
+  const searchObj = {
+    'search': {
+      "source_market": "IN",
+      "type": area.type,
+      "id": limitedAreaId,
+      "name": area.name,
+      "check_in_date": checkInDate,
+      "check_out_date": checkOutDate,
+      "total_adult_count": total_adult.toString(),
+      "total_child_count": total_child.toString(),
+      "total_room_count": details.length.toString(),
+      "details": details
+    }
+  };
+
+  if (transaction_identifier && transaction_identifier != "undefined") {
+    searchObj.search.transaction_identifier = transaction_identifier;
+  }
+
+  console.log(searchObj);
+
+  let data;
+
+  try {
+    let client;
+    try {
+      client = await getRedisClient();
+    } catch (err) {
+      console.error('Failed to connect to Redis:', err);
+      // Continue without Redis cache if connection fails
+    }
+
+    let cachedData;
+    let redisKey = Object.assign({}, searchObj.search);
+    delete redisKey.transaction_identifier;
+    redisKey = JSON.stringify(redisKey);
+
+    if (client && client.isOpen) {
+      try {
+        cachedData = await client.get(`hotels_search_b2b:${redisKey}`);
+      } catch (err) {
+        console.log('Redis get error:', err);
+      }
+    }
+    
+    if (cachedData) {
+      data = JSON.parse(cachedData);
+      console.log('served from redis');
+    } else {
+      data = await Api.post("/search", searchObj);
+      console.log('served from the api..');
+      if (data.data && data.data.totalHotelsCount >= 1 && client && client.isOpen) {
+        try {
+          console.log(redisKey);
+          // cache will expire in 5 mins i.e. 5 * 60 = 300 seconds
+          await client.setEx(`hotels_search_b2b:${redisKey}`, 300, JSON.stringify(data));
+          console.log('data cached');
+        } catch (err) {
+          console.log('redis set error: ', err);
+        }
+      }
+    }
+  } catch (err) {
+    return next(err);
+  }
+
+  if (!data.data) {
+    console.log(data);
+    return res.status(404).send('No Hotels Found');
+  } else if (data.data && data.data.hotels.length < 1) {
+    console.log(`Error: No hotels found`);
+    console.log(data);
+    return res.status(404).send("No hotels found");
+  } else {
+    // deep copy hotels array
+    let hotelsList = [...data.data.hotels];
+    console.log(hotelsList);
+
+    const nextHotelsCount = page * perPage > hotelsList.length ? hotelsList.length : page * perPage;
+
+    const paginaionObj = {
+      'currentHotelsCount': nextHotelsCount,
+      'totalHotelsCount': hotelsList.length,
+      'totalPages': Math.ceil(hotelsList.length / perPage),
+      'pollingStatus': ''
+    };
+
+    let pollingStatus;
+
+    if (page > paginaionObj.totalPages) {
+      return res.status(422).json({
+        'message': 'Invalid page no'
+      });
+    }
+
+    if (page === paginaionObj.totalPages) {
+      pollingStatus = "complete";
+    } else {
+      pollingStatus = "in-progress";
+    }
+
+    paginaionObj.pollingStatus = pollingStatus;
+
+    let lowerBound = currentHotelsCount;
+    let upperBound = lowerBound + perPage;
+
+    // upperBound should not be greater than totalHotels + 1
+    if (upperBound > paginaionObj.totalHotelsCount + 1) {
+      upperBound = paginaionObj.totalHotelsCount + 1;
+    }
+
+    console.log(paginaionObj);
+    console.log(page);
+    console.log(perPage);
+    console.log(lowerBound);
+    console.log(upperBound);
+
+    // select only requested no of hotels in current iteration
+    const selectedHotels = hotelsList.slice(lowerBound, upperBound);
+
+    // Do not filter out hotels without packages; process all selected hotels
+    let hotelsToProcess = selectedHotels;
+
+    let hotels;
+    let minPrice = 0;
+    let maxPrice = 1;
+
+    try {
+      // Insert hotels into database
+      hotels = await Hotel.insertMany(hotelsToProcess);
+      console.log('Hotels inserted into database:', hotels.length);
+
+      const promiseArray = hotels.map(async (hotel) => {
+        hotel.hotelId = hotel._id;
+        
+        // Process all packages for the hotel
+        const processedPackages = [];
+        let hotelMinPrice = Infinity;
+        let hotelMaxPrice = 0;
+
+        for (const hotelPackage of hotel.rates.packages) {
+          // Additional validation to ensure package exists
+          if (!hotelPackage) {
+            console.log(`Skipping package for hotel ${hotel.name} - no valid package found`);
+            continue;
+          }
+
+          try {
+            // Apply markup using the applyOwnerMarkup function
+            const processedPackage = await applyOwnerMarkup(hotelPackage);
+            processedPackages.push(processedPackage);
+            
+            // Update min/max prices for this hotel
+            const packagePrice = processedPackage.chargeable_rate || processedPackage.base_amount || 0;
+            if (packagePrice < hotelMinPrice) {
+              hotelMinPrice = packagePrice;
+            }
+            if (packagePrice > hotelMaxPrice) {
+              hotelMaxPrice = packagePrice;
+            }
+          } catch (err) {
+            console.log(`Error applying markup to package in hotel ${hotel.name}:`, err);
+            // Add original package if markup fails
+            processedPackages.push(hotelPackage);
+          }
+        }
+
+        // Update the hotel's packages with processed ones
+        hotel.rates.packages = processedPackages;
+
+        // If no packages, add a dummy zero package
+        if (processedPackages.length === 0) {
+          hotel.rates.packages = [{
+            base_amount: 0,
+            service_component: 0,
+            gst: 0,
+            chargeable_rate: 0
+          }];
+        }
+
+        // Update global min/max prices
+        if (hotelMinPrice < minPrice) {
+          minPrice = hotelMinPrice;
+        }
+        if (hotelMaxPrice > maxPrice) {
+          maxPrice = hotelMaxPrice;
+        }
+
+        // Always return hotel (even if only dummy package)
+        return hotel;
+      });
+
+      const allHotels = await Promise.all(promiseArray);
+      // Filter out null values (hotels that failed processing)
+      const validHotels = allHotels.filter(hotel => hotel !== null);
+      
+      const filteredHotels = [];
+      console.log(validHotels);
+      console.log(filters);
+      validHotels.forEach((hotel) => {
+        // Additional validation before accessing packages
+        if (!hotel.rates || !hotel.rates.packages || hotel.rates.packages.length === 0) {
+          console.log(`Skipping hotel ${hotel.name} - no packages available for filtering`);
+          return;
+        }
+
+        // hotel filters
+        if (filters.roomType && filters.roomType.length > 0) {
+          let flag = false;
+          hotel.rates.packages.forEach((pkg) => {
+            if (filters.roomType.includes(pkg.room_details.room_type)) {
+              flag = true;
+              return;
+            }
+          });
+          console.log('0', flag);
+          if (!flag) return;
+        }
+        if (filters.foodType && filters.foodType.length > 0) {
+          let flag = false;
+          hotel.rates.packages.forEach((pkg) => {
+            if (filters.foodType.includes(pkg.room_details.food)) {
+              flag = true;
+              return;
+            }
+          });
+          console.log('1', flag);
+          if (!flag) return;
+        }
+        if (filters.refundable && filters.refundable.length > 0) {
+          // Check if ANY package matches the refundable filter
+          let flag = false;
+          hotel.rates.packages.forEach((pkg) => {
+            let isNonRefundable = pkg.room_details.non_refundable;
+            if (isNonRefundable === undefined) {
+              isNonRefundable = true;
+            }
+            // checking for refundable
+            if (filters.refundable.includes(!isNonRefundable)) {
+              flag = true;
+            }
+          });
+          console.log('2', flag);
+          if (!flag) return;
+        }
+        if (filters.starRating && filters.starRating.length > 0) {
+          let starRating = hotel.starRating;
+          if (!starRating) {
+            starRating = 0;
+          }
+          const flag = filters.starRating.includes(starRating);
+          console.log('3', flag);
+          if (!flag) return;
+        }
+
+        if (filters.price && filters.price.min >= 0 && filters.price.max > 0) {
+          // Check if ANY package falls within the price range
+          let flag = false;
+          hotel.rates.packages.forEach((pkg) => {
+            const packagePrice = pkg.chargeable_rate || pkg.base_amount || 0;
+            if (packagePrice >= filters.price.min && packagePrice <= filters.price.max) {
+              flag = true;
+            }
+          });
+          if (!flag) return;
+        }
+        filteredHotels.push(hotel);
+      });
+
+      console.log(filteredHotels);
+
+      hotels = filteredHotels;
+
+    } catch (err) {
+      console.log(err);
+      return res.status(500).json({
+        "message": "Error in generating response!"
+      });
+    }
+
+    // Update pagination counts based on actual filtered hotels
+    const actualHotelsCount = hotels.length;
+    const actualCurrentHotelsCount = currentHotelsCount + actualHotelsCount;
+    
+    // Recalculate pagination for the actual number of hotels
+    const actualPaginaionObj = {
+      'currentHotelsCount': actualCurrentHotelsCount,
+      'totalHotelsCount': hotelsList.length, // Keep original total for pagination
+      'totalPages': Math.ceil(hotelsList.length / perPage),
+      'pollingStatus': paginaionObj.pollingStatus
+    };
+
+    // Remove MongoDB-specific fields from response
+    const cleanHotels = hotels.map(hotel => {
+      const { _id, __v, created_at, updated_at, hotelId, ...hotelData } = hotel;
+      return hotelData;
+    });
+
+    const dataObj = {
+      'data': {
+        'search': data.data.search,
+        'region': data.data.region,
+        'hotels': cleanHotels,
+        'price': {
+          minPrice: Math.floor(minPrice),
+          maxPrice: Math.ceil(maxPrice)
+        },
+        'currentHotelsCount': actualPaginaionObj.currentHotelsCount,
+        'totalHotelsCount': actualPaginaionObj.totalHotelsCount,
+        'page': page,
+        'perPage': perPage,
+        'totalPages': actualPaginaionObj.totalPages,
+        'status': actualPaginaionObj.pollingStatus,
+        'transaction_identifier': data.transaction_identifier
+      }
+    };
+
+    console.log(dataObj);
+    
+    const totalTime = Date.now() - startTime;
+    console.log('=== B2B SEARCH FUNCTION COMPLETED ===');
+    console.log('Total execution time:', totalTime, 'ms');
+    console.log('Hotels returned:', cleanHotels.length);
+    console.log('Final response status:', actualPaginaionObj.pollingStatus);
+
+    res.json(dataObj);
   }
 };
   
