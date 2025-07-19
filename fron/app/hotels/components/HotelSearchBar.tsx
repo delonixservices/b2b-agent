@@ -214,7 +214,6 @@ export default function HotelSearchBar() {
             </label>
           </div>
           <div className="text-right text-xs text-black font-medium hidden md:block">
-            Last Search:
           </div>
         </div>
         
